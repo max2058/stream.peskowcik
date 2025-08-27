@@ -130,10 +130,10 @@ def build_rss(results: List[Dict[str, Any]]) -> str:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Sandmännchen Sorbisch", layout="centered")
+    st.set_page_config(page_title="Sandmännchen Sorbisch", layout="wide")
     st.image(
         "https://www.mdr.de/sandmann/sandmann824-resimage_v-variantBig24x9_w-2560.jpg?version=55897",
-        use_column_width=True,
+        use_container_width=True,
     )
     st.title("Unser Sandmännchen – Sorbische Folgen")
     st.write(
@@ -143,27 +143,6 @@ def main() -> None:
         "Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen. https://github.com/max2058/stream.peskowcik"
     )
     
-    st.markdown(
-        """
-        <style>
-        .episode-table table {
-            border-collapse: collapse;
-            width: 100%;
-        }
-        .episode-table th, .episode-table td {
-            border: 1px solid #ddd;
-            padding: 8px;
-        }
-        .episode-table tr:nth-child(even) {background-color: #f9f9f9;}
-        .episode-table th {
-            background-color: #4CAF50;
-            color: white;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
     # API Query and Fetch
     with st.spinner("Lade Daten von der Mediathek…"):
         query_json = build_query()
@@ -185,22 +164,24 @@ def main() -> None:
         }
         table_rows.append(row)
 
-    st.subheader("Gefundene Folgen")
-    df = pd.DataFrame(table_rows)
-    df["Website"] = df["Website"].apply(
-        lambda url: f'<a href="{url}" target="_blank">zur Seite</a>'
-    )
-    df_display = df.drop(columns=["Video"])
-    st.markdown(
-        df_display.to_html(escape=False, index=False, classes="episode-table"),
-        unsafe_allow_html=True,
-    )
-
     st.subheader("Folgen abspielen")
     for row in table_rows:
         with st.expander(f"{row['Titel']} ({row['Datum']})"):
             st.write(row["Beschreibung"])
             st.video(row["Video"])
+
+    st.subheader("Gefundene Folgen")
+    df = pd.DataFrame(table_rows)
+    df_display = df.drop(columns=["Video"])
+    st.dataframe(
+        df_display,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Beschreibung": st.column_config.TextColumn("Beschreibung", width="medium"),
+            "Website": st.column_config.LinkColumn("Website", display_text="zur Seite"),
+        },
+    )
 
     # Provide a download button for RSS
     rss_xml = build_rss(results)
