@@ -299,11 +299,43 @@ def build_rss(results: List[Dict[str, Any]]) -> str:
 
 def main() -> None:
     st.set_page_config(page_title="Sandmännchen Sorbisch", layout="wide")
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background-color: #0e0e0e;
+            color: #fafafa;
+        }
+        .episode-card {
+            background-color: #1a1a1a;
+            border-radius: 8px;
+            padding: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        .episode-card video {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .episode-title {
+            font-weight: 600;
+            margin-top: 0.5rem;
+        }
+        .episode-date {
+            font-size: 0.85rem;
+            color: #ccc;
+            margin-bottom: 0.5rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     st.image(
         "https://www.mdr.de/sandmann/sandmann824-resimage_v-variantBig24x9_w-2560.jpg?version=55897",
         use_container_width=True,
     )
     st.title("Unser Sandmännchen – Sorbische Folgen")
+    st.info("Diese App befindet sich noch im Aufbau und in der Entwicklung.")
     st.write(
         "Um sich nicht mit der KiKA- oder ARD-Mediathek herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App."
     )
@@ -437,13 +469,29 @@ def main() -> None:
         table_rows.append(row)
 
     st.subheader("Folgen abspielen")
-    for row in table_rows:
-        with st.expander(f"{row['Titel']} ({row['Datum']})"):
-            st.write(row["Beschreibung"])
-            # Some entries may not have a direct video url (e.g. if geoblocked).  Use the
-            # website as fallback when url_video is missing.
-            video_url = row["Video"] or row["Website"]
-            st.video(video_url)
+    cards_per_row = 3
+    for start in range(0, len(table_rows), cards_per_row):
+        cols = st.columns(cards_per_row)
+        for idx, row in enumerate(table_rows[start : start + cards_per_row]):
+            with cols[idx]:
+                video_url = row["Video"] or row["Website"]
+                if video_url and video_url.endswith(".mp4"):
+                    video_html = (
+                        f"<video controls><source src='{video_url}' type='video/mp4'></video>"
+                    )
+                else:
+                    video_html = f"<a href='{video_url}' target='_blank'>zur Folge</a>"
+                st.markdown(
+                    f"""
+                    <div class='episode-card'>
+                        {video_html}
+                        <div class='episode-title'>{row['Titel']}</div>
+                        <div class='episode-date'>{row['Datum']}</div>
+                        <p>{row['Beschreibung']}</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
     st.subheader("Gefundene Folgen")
     df = pd.DataFrame(table_rows)
