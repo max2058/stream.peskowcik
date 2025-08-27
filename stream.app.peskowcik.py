@@ -114,55 +114,42 @@ def extract_base64_id(url: str) -> Optional[str]:
 
 
 def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
-    """Determine whether a MediathekViewWeb entry is a sorbischsprachige Folge.
+    """Heuristically determine whether a MediathekViewWeb entry is sorbischsprachig.
 
-    The MediathekViewWeb API does not explicitly tag sorbische Folgen.
-    Therefore we attempt several heuristics:
-    1. If ``title`` or ``description`` contain the word "sorbisch" (case‑insensitiv),
-       we assume it is a sorbian episode.
-    2. If the title contains "Peskowcik" or "Pěskowčik", this also indicates a
-       sorbian version.
-    3. Otherwise, if the entry is hosted on the ARD Mediathek (``url_website``
-       contains a base64 id), we query the ARD page‑gateway API for
-       additional metadata.  If the ``longTitle`` or ``mediumTitle`` fields
-       contain "sorbisch", we classify it as sorbian.
+    Because calling the ARD API for every entry introduces long loading
+    times and may hit network timeouts, this function relies solely on
+    pattern matching in the ``title`` and ``description`` fields.
+
+    Known sorbische Folgen typically include the words "sorbisch" or
+    "Pěskowčik" (oder "Peskowcik") in ihrem Titel.  Die Folge
+    "Fuchs und Elster: Gestörte Angelfreuden" enthält zwar kein
+    "sorbisch", hat aber einen einzigartigen Folgentitel.  Daher
+    ergänzen wir eine Liste von Schlüsselbegriffen, die auf sorbische
+    Inhalte hinweisen.
 
     Args:
         entry: A result dict from the MediathekViewWeb API.
 
     Returns:
-        True if the episode appears to be sorbian, otherwise False.
+        True if the entry appears to be sorbischsprachig, otherwise False.
     """
-    title = entry.get("title", "") or ""
-    description = entry.get("description", "") or ""
-    lower_title = title.lower()
-    lower_desc = description.lower()
-    # quick keyword checks
-    if "sorbisch" in lower_title or "sorbisch" in lower_desc:
-        return True
-    # look for sorbian series name
-    if "peskowcik" in lower_title or "pěskowčik" in lower_title:
-        return True
-    # attempt to fetch ARD metadata if available
-    url = entry.get("url_website", "") or ""
-    base64_id = extract_base64_id(url)
-    if not base64_id:
-        return False
-    try:
-        api_url = f"https://api.ardmediathek.de/page-gateway/pages/ard/item/{base64_id}"
-        r = requests.get(api_url, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-    except Exception:
-        # If the ARD API is unreachable or not JSON, we conservatively return False
-        return False
-    # search for sorbisch in longTitle or mediumTitle within all widgets
-    widgets = data.get("widgets", [])
-    for widget in widgets:
-        for key in ("longTitle", "mediumTitle", "title", "shortTitle"):
-            value = widget.get(key)
-            if isinstance(value, str) and "sorbisch" in value.lower():
-                return True
+    title = (entry.get("title") or "").lower()
+    description = (entry.get("description") or "").lower()
+    # simple keywords that almost always mark sorbian episodes
+    keywords = [
+        "sorbisch",
+        "peskowcik",
+        "pěskowčik",
+        "gestörte angelfreuden",
+        "gestoerte angelfreuden",
+        "suwa",
+        "spewaca",
+        "mróčele",
+        "mrocele",
+    ]
+    for kw in keywords:
+        if kw in title or kw in description:
+            return True
     return False
 
 
