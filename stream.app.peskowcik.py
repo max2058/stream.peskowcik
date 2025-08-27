@@ -339,6 +339,7 @@ def main() -> None:
         use_container_width=True,
     )
     st.title("Unser Sandmännchen – Sorbische Folgen")
+    st.info("Diese App befindet sich noch im Aufbau und in der Entwicklung")
     st.write(
         "Um sich nicht mit der KiKA- oder ARD-Mediathek herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App."
     )
@@ -472,16 +473,24 @@ def main() -> None:
             "Titel": entry.get("title"),
             "Beschreibung": entry.get("description"),
             "Datum": datetime.fromtimestamp(entry.get("timestamp", 0)).strftime("%d.%m.%Y"),
+            "Vorschau": entry.get("image_url")
+            or entry.get("url_image")
+            or entry.get("url_thumbnail"),
             "Video": entry.get("url_video"),
             "Website": entry.get("url_website"),
         }
         table_rows.append(row)
 
-    st.subheader("Folgen abspielen")
-    for row in table_rows:
-        with st.expander(f"{row['Titel']} ({row['Datum']})"):
+    st.subheader("Folgen ansehen")
+    cols = st.columns(3)
+    for idx, row in enumerate(table_rows):
+        col = cols[idx % 3]
+        with col:
+            if row.get("Vorschau"):
+                st.image(row["Vorschau"], use_column_width=True)
+            st.caption(f"{row['Titel']} ({row['Datum']})")
             st.write(row["Beschreibung"])
-            # Some entries may not have a direct video url (e.g. if geoblocked).  Use the
+            # Some entries may not have a direct video url (e.g. if geoblocked). Use the
             # website as fallback when url_video is missing.
             video_url = row["Video"] or row["Website"]
             st.video(video_url)
@@ -496,6 +505,7 @@ def main() -> None:
         column_config={
             "Beschreibung": st.column_config.TextColumn("Beschreibung", width="medium"),
             "Website": st.column_config.LinkColumn("Website", display_text="zur Seite"),
+            "Vorschau": st.column_config.ImageColumn("Vorschau", width="small"),
         },
     )
 
