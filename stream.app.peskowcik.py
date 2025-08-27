@@ -331,7 +331,10 @@ def main() -> None:
     # so we limit the number of checks and deduplicate results on the fly.
     #
     sorbian_entries: List[Dict[str, Any]] = []
-    unique_keys: set[tuple[str, int]] = set()
+    # Use a string set for deduplication. Prefer a stable episode identifier
+    # extracted from the url; fall back to a combination of title and
+    # timestamp when no id can be determined.
+    unique_keys: set[str] = set()
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
     max_checks = 200  # maximum number of entries to examine per page
     max_results = 15  # maximum number of sorbian episodes to collect
@@ -358,9 +361,12 @@ def main() -> None:
                 cutoff_reached = True
                 break
             if is_sorbian_episode(entry):
-                # use (normalized title, timestamp) as a deduplication key
-                title = (entry.get("title") or "").strip().lower()
-                key = (title, ts)
+                base_id = extract_base64_id(entry.get("url_website", ""))
+                if base_id:
+                    key = base_id
+                else:
+                    title = (entry.get("title") or "").strip().lower()
+                    key = f"{title}-{ts}"
                 if key not in unique_keys:
                     sorbian_entries.append(entry)
                     unique_keys.add(key)
@@ -383,15 +389,14 @@ def main() -> None:
     for base64_id in MANUAL_EPISODES:
         try:
             # only fetch if we still need more episodes or if the id is not yet present
-            # The dedup key for manual episodes is based on title and timestamp,
-            # which we extract after fetch_ard_episode.
             ep = fetch_ard_episode(base64_id)
         except Exception:
             ep = None
         if ep:
-            title_norm = (ep.get("title") or "").strip().lower()
+            # Prefer the explicit base64 id; fall back to title+timestamp if missing.
             ts = ep.get("timestamp", 0)
-            key = (title_norm, ts)
+            title_norm = (ep.get("title") or "").strip().lower()
+            key = base64_id or extract_base64_id(ep.get("url_website", "")) or f"{title_norm}-{ts}"
             if key not in unique_keys:
                 sorbian_entries.append(ep)
                 unique_keys.add(key)
