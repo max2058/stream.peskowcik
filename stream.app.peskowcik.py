@@ -17,13 +17,17 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 
 import re
+import base64
 import requests
 import streamlit as st
 import pandas as pd
 from pathlib import Path
+import streamlit.components.v1 as components
 
 
 DEFAULT_THUMBNAIL = Path(__file__).with_name("sandmann_preview.png").read_bytes()
+# Data URL for use as <video poster="...">
+THUMBNAIL_DATA_URL = "data:image/png;base64," + base64.b64encode(DEFAULT_THUMBNAIL).decode("ascii")
 
 
 def build_query(
@@ -489,14 +493,24 @@ def main() -> None:
     for idx, row in enumerate(table_rows):
         col = cols[idx % 3]
         with col:
-            if row.get("Vorschau"):
-                st.image(row["Vorschau"], use_column_width=True)
             st.caption(f"{row['Titel']} ({row['Datum']})")
             st.write(row["Beschreibung"])
             # Some entries may not have a direct video url (e.g. if geoblocked). Use the
             # website as fallback when url_video is missing.
-            video_url = row["Video"] or row["Website"]
-            st.video(video_url)
+            video_url = row["Video"]
+            if video_url:
+                video_html = f'''
+<video controls preload="none" playsinline style="width: 100%; height: auto;" poster="{THUMBNAIL_DATA_URL}">
+  <source src="{video_url}" type="video/mp4">
+  Dein Browser unterstützt das Video-Tag nicht.
+</video>
+'''
+                components.html(video_html, height=300)
+            else:
+                # Fallback: verlinktes Vorschaubild zur Website
+                website = row["Website"]
+                preview_link_html = f'<a href="{website}" target="_blank"><img src="{THUMBNAIL_DATA_URL}" style="width:100%; height:auto; border:0;"/></a>'
+                components.html(preview_link_html, height=300)
 
     st.subheader("Gefundene Folgen")
     df = pd.DataFrame(table_rows)
