@@ -340,7 +340,14 @@ def main() -> None:
     # to the normalized title.  We avoid using the timestamp as part
     # of the deduplication key because some duplicates have different
     # publication timestamps for the same content.
-    unique_keys: set[str] = set()
+    # Use a set of tuples for deduplication.  Each key consists of
+    # (normalized title, normalized description, date string).  This
+    # approach tolerates variations in publication timestamps or URLs but
+    # collapses entries that are effectively identical in content and
+    # broadcast date (e.g. "Fuchs und Elster: Gestörte Angelfreuden" in ARD
+    # and KiKA).  The normalized description ensures that similar titles
+    # with different episode descriptions are treated separately.
+    unique_keys: set[tuple[str, str, str]] = set()
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
     max_checks = 200  # maximum number of entries to examine per page
     max_results = 15  # maximum number of sorbian episodes to collect
@@ -367,17 +374,13 @@ def main() -> None:
                 cutoff_reached = True
                 break
             if is_sorbian_episode(entry):
-                # build a deduplication key: prefer base64 ID extracted from
-                # the website or video URL; otherwise use normalized title
+                # Normalize key components
                 title_norm = (entry.get("title") or "").strip().lower()
-                base64_id = (
-                    extract_base64_id(entry.get("url_website", ""))
-                    or extract_base64_id(entry.get("url_video", ""))
-                )
-                if base64_id:
-                    key = base64_id
-                else:
-                    key = title_norm
+                desc_norm = (entry.get("description") or "").strip().lower()
+                # Use only the date (not time) for deduplication
+                ts_int = int(entry.get("timestamp", 0))
+                date_str = datetime.fromtimestamp(ts_int, tz=timezone.utc).strftime("%Y-%m-%d") if ts_int else ""
+                key = (title_norm, desc_norm, date_str)
                 if key not in unique_keys:
                     sorbian_entries.append(entry)
                     unique_keys.add(key)
@@ -406,11 +409,13 @@ def main() -> None:
         except Exception:
             ep = None
         if ep:
-            # Deduplication for manual episodes: use the provided base64 ID if
-            # possible; otherwise fall back to the normalized title.
+            # For manual episodes, build the same composite key as used for
+            # entries from the API.
             title_norm = (ep.get("title") or "").strip().lower()
-            base64_key = base64_id or extract_base64_id(ep.get("url_website", "")) or extract_base64_id(ep.get("url_video", ""))
-            key = base64_key if base64_key else title_norm
+            desc_norm = (ep.get("description") or "").strip().lower()
+            ts_int = int(ep.get("timestamp", 0))
+            date_str = datetime.fromtimestamp(ts_int, tz=timezone.utc).strftime("%Y-%m-%d") if ts_int else ""
+            key = (title_norm, desc_norm, date_str)
             if key not in unique_keys:
                 sorbian_entries.append(ep)
                 unique_keys.add(key)
