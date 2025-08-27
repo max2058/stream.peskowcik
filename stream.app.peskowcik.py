@@ -113,6 +113,17 @@ def extract_base64_id(url: str) -> Optional[str]:
     return None
 
 
+def normalize_title(title: str) -> str:
+    """Normalize titles for deduplication.
+
+    Removes everything after the first "|" and strips surrounding whitespace.
+    The result is lowercased to ensure stable comparisons.
+    """
+    if not title:
+        return ""
+    return title.split("|", 1)[0].strip().lower()
+
+
 def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
     """Heuristically determine whether a MediathekViewWeb entry is sorbischsprachig.
 
@@ -332,8 +343,8 @@ def main() -> None:
     #
     sorbian_entries: List[Dict[str, Any]] = []
     # Use a string set for deduplication. Prefer a stable episode identifier
-    # extracted from the url; fall back to a combination of title and
-    # timestamp when no id can be determined.
+    # from the id or urls; fall back to a normalized title when no id can be
+    # determined.
     unique_keys: set[str] = set()
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
     max_checks = 200  # maximum number of entries to examine per page
@@ -361,16 +372,13 @@ def main() -> None:
                 cutoff_reached = True
                 break
             if is_sorbian_episode(entry):
+                title_norm = normalize_title(entry.get("title") or "")
                 stable_id = (
                     entry.get("id")
-                    or extract_base64_id(entry.get("url_video", ""))
                     or extract_base64_id(entry.get("url_website", ""))
+                    or extract_base64_id(entry.get("url_video", ""))
                 )
-                if stable_id:
-                    key = str(stable_id)
-                else:
-                    title = (entry.get("title") or "").strip().lower()
-                    key = title
+                key = str(stable_id) if stable_id else title_norm
                 if key not in unique_keys:
                     sorbian_entries.append(entry)
                     unique_keys.add(key)
@@ -398,12 +406,12 @@ def main() -> None:
             ep = None
         if ep:
             # Prefer the explicit base64 id or other stable identifiers; fall back to title when missing.
-            title_norm = (ep.get("title") or "").strip().lower()
+            title_norm = normalize_title(ep.get("title") or "")
             key = (
                 base64_id
                 or ep.get("id")
-                or extract_base64_id(ep.get("url_video", ""))
                 or extract_base64_id(ep.get("url_website", ""))
+                or extract_base64_id(ep.get("url_video", ""))
                 or title_norm
             )
             key_str = str(key)
