@@ -20,6 +20,10 @@ import re
 import requests
 import streamlit as st
 import pandas as pd
+from pathlib import Path
+
+
+DEFAULT_THUMBNAIL = Path(__file__).with_name("sandmann_preview.png").read_bytes()
 
 
 def build_query(
