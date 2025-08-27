@@ -408,8 +408,16 @@ def main() -> None:
                 cutoff_reached = True
                 break
             if is_sorbian_episode(entry):
+                # Skip german duplicate of Gestörte Angelfreuden if it lacks a base64 ID
+                title_lower = (entry.get("title") or "").strip().lower()
+                if "gestörte angelfreuden" in title_lower or "gestoerte angelfreuden" in title_lower:
+                    # Only keep the version with a base64-coded ID
+                    b64 = extract_base64_id(entry.get("url_website", "")) or extract_base64_id(entry.get("url_video", ""))
+                    if not b64:
+                        checked += 1
+                        continue
                 # Normalize key components
-                title_norm = (entry.get("title") or "").strip().lower()
+                title_norm = title_lower
                 desc_norm = (entry.get("description") or "").strip().lower()
                 ts_int = int(entry.get("timestamp", 0))
                 date_str = datetime.fromtimestamp(ts_int, tz=timezone.utc).strftime("%Y-%m-%d") if ts_int else ""
