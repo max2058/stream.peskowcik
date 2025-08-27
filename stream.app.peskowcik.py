@@ -88,31 +88,28 @@ def fetch_results(query_json: str) -> List[Dict[str, Any]]:
     return results
 
 
-def extract_episode_id(url: str) -> Optional[str]:
-    """Extract a stable episode identifier from a URL.
+def extract_base64_id(url: str) -> Optional[str]:
+    """Extract the base64‑encoded publication ID from a MediathekViewWeb url.
 
-    The identifier is expected to be contained in the last path segment of
-    the URL.  Any query string or file extension is stripped before
-    validation.  If the cleaned segment contains only ``[A-Za-z0-9_-]``
-    characters it is returned as the identifier (covering both base64 IDs
-    and simple slugs).
+    The MediathekViewWeb API returns the ``url_website`` field which often
+    ends with a base64‑encoded identifier (e.g. ``.../Y3JpZDovL3JiYl84ZGU4...``).
+    This helper returns that identifier if present.
 
     Args:
-        url: The website or video URL returned by MediathekViewWeb or the
-            ARD Mediathek.
+        url: The website url returned by MediathekViewWeb.
 
     Returns:
-        The cleaned identifier if one could be extracted, otherwise ``None``.
+        The base64 string if one could be extracted, otherwise ``None``.
     """
     if not url:
         return None
-    # Remove query string and select last path segment
-    path = url.split("?", 1)[0]
-    segment = path.rstrip("/").split("/")[-1]
-    # Drop file extension if present
-    segment = segment.split(".", 1)[0]
-    if re.fullmatch(r"[A-Za-z0-9_-]+", segment):
-        return segment
+    # The ID is the last path segment after the last slash, and it
+    # consists of base64 characters (letters, digits, +, /, =)
+    parts = url.rstrip("/").split("/")
+    candidate = parts[-1]
+    # Heuristically check if it looks like base64 (no dots or dashes)
+    if re.fullmatch(r"[A-Za-z0-9_\-]+", candidate):
+        return candidate
     return None
 
 
@@ -334,9 +331,12 @@ def main() -> None:
     # so we limit the number of checks and deduplicate results on the fly.
     #
     sorbian_entries: List[Dict[str, Any]] = []
-    # Use a string set for deduplication. Prefer a stable episode identifier
-    # extracted from the url; fall back to a combination of title and
-    # timestamp when no id can be determined.
+    # Use a set of strings to track unique episodes.  Wherever possible
+    # we deduplicate based on a stable base64 identifier extracted from
+    # the episode URLs.  If no identifier can be found, we fall back
+    # to the normalized title.  We avoid using the timestamp as part
+    # of the deduplication key because some duplicates have different
+    # publication timestamps for the same content.
     unique_keys: set[str] = set()
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
     max_checks = 200  # maximum number of entries to examine per page
@@ -364,16 +364,17 @@ def main() -> None:
                 cutoff_reached = True
                 break
             if is_sorbian_episode(entry):
-                stable_id = (
-                    entry.get("id")
-                    or extract_episode_id(entry.get("url_video", ""))
-                    or extract_episode_id(entry.get("url_website", ""))
+                # build a deduplication key: prefer base64 ID extracted from
+                # the website or video URL; otherwise use normalized title
+                title_norm = (entry.get("title") or "").strip().lower()
+                base64_id = (
+                    extract_base64_id(entry.get("url_website", ""))
+                    or extract_base64_id(entry.get("url_video", ""))
                 )
-                if stable_id:
-                    key = str(stable_id)
+                if base64_id:
+                    key = base64_id
                 else:
-                    title = (entry.get("title") or "").strip().lower()
-                    key = title
+                    key = title_norm
                 if key not in unique_keys:
                     sorbian_entries.append(entry)
                     unique_keys.add(key)
@@ -396,24 +397,20 @@ def main() -> None:
     for base64_id in MANUAL_EPISODES:
         try:
             # only fetch if we still need more episodes or if the id is not yet present
+            # The dedup key for manual episodes is based on title and timestamp,
+            # which we extract after fetch_ard_episode.
             ep = fetch_ard_episode(base64_id)
         except Exception:
             ep = None
         if ep:
-            # Prefer the explicit base64 id or other stable identifiers (episode id or slug);
-            # fall back to title when missing.
+            # Deduplication for manual episodes: use the provided base64 ID if
+            # possible; otherwise fall back to the normalized title.
             title_norm = (ep.get("title") or "").strip().lower()
-            key = (
-                base64_id
-                or ep.get("id")
-                or extract_episode_id(ep.get("url_video", ""))
-                or extract_episode_id(ep.get("url_website", ""))
-                or title_norm
-            )
-            key_str = str(key)
-            if key_str not in unique_keys:
+            base64_key = base64_id or extract_base64_id(ep.get("url_website", "")) or extract_base64_id(ep.get("url_video", ""))
+            key = base64_key if base64_key else title_norm
+            if key not in unique_keys:
                 sorbian_entries.append(ep)
-                unique_keys.add(key_str)
+                unique_keys.add(key)
 
     if not sorbian_entries:
         st.warning("Derzeit sind keine sorbischsprachigen Sandmännchen‑Folgen verfügbar.")
