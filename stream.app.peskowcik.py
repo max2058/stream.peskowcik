@@ -361,12 +361,16 @@ def main() -> None:
                 cutoff_reached = True
                 break
             if is_sorbian_episode(entry):
-                base_id = extract_base64_id(entry.get("url_website", ""))
-                if base_id:
-                    key = base_id
+                stable_id = (
+                    entry.get("id")
+                    or extract_base64_id(entry.get("url_video", ""))
+                    or extract_base64_id(entry.get("url_website", ""))
+                )
+                if stable_id:
+                    key = str(stable_id)
                 else:
                     title = (entry.get("title") or "").strip().lower()
-                    key = f"{title}-{ts}"
+                    key = title
                 if key not in unique_keys:
                     sorbian_entries.append(entry)
                     unique_keys.add(key)
@@ -393,13 +397,19 @@ def main() -> None:
         except Exception:
             ep = None
         if ep:
-            # Prefer the explicit base64 id; fall back to title+timestamp if missing.
-            ts = ep.get("timestamp", 0)
+            # Prefer the explicit base64 id or other stable identifiers; fall back to title when missing.
             title_norm = (ep.get("title") or "").strip().lower()
-            key = base64_id or extract_base64_id(ep.get("url_website", "")) or f"{title_norm}-{ts}"
-            if key not in unique_keys:
+            key = (
+                base64_id
+                or ep.get("id")
+                or extract_base64_id(ep.get("url_video", ""))
+                or extract_base64_id(ep.get("url_website", ""))
+                or title_norm
+            )
+            key_str = str(key)
+            if key_str not in unique_keys:
                 sorbian_entries.append(ep)
-                unique_keys.add(key)
+                unique_keys.add(key_str)
 
     if not sorbian_entries:
         st.warning("Derzeit sind keine sorbischsprachigen Sandmännchen‑Folgen verfügbar.")
