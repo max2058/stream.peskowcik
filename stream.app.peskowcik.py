@@ -477,9 +477,8 @@ def main() -> None:
             "Titel": entry.get("title"),
             "Beschreibung": entry.get("description"),
             "Datum": datetime.fromtimestamp(entry.get("timestamp", 0)).strftime("%d.%m.%Y"),
-            "Vorschau": entry.get("image_url")
-            or entry.get("url_image")
-            or entry.get("url_thumbnail"),
+            # Einheitliches Vorschaubild für alle Videos
+            "Vorschau": DEFAULT_THUMBNAIL,
             "Video": entry.get("url_video"),
             "Website": entry.get("url_website"),
         }
