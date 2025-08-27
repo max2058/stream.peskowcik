@@ -18,6 +18,7 @@ from typing import List, Dict, Any
 
 import requests
 import streamlit as st
+import pandas as pd
 
 
 def build_query(topic: str = "Unser Sandmännchen", title_filter: str = "sorbisch", *, size: int = 20, offset: int = 0) -> str:
@@ -130,9 +131,33 @@ def build_rss(results: List[Dict[str, Any]]) -> str:
 
 def main() -> None:
     st.set_page_config(page_title="Sandmännchen Sorbisch", layout="centered")
+    st.image(
+        "https://www.mdr.de/sandmann/sandmann824-resimage_v-variantBig24x9_w-2560.jpg?version=55897",
+        use_column_width=True,
+    )
     st.title("Unser Sandmännchen – Sorbische Folgen")
     st.write(
         "Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen."
+    )
+    st.markdown(
+        """
+        <style>
+        .episode-table table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        .episode-table th, .episode-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+        .episode-table tr:nth-child(even) {background-color: #f9f9f9;}
+        .episode-table th {
+            background-color: #4CAF50;
+            color: white;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
     # API Query and Fetch
@@ -151,13 +176,27 @@ def main() -> None:
             "Titel": entry.get("title"),
             "Beschreibung": entry.get("description"),
             "Datum": datetime.fromtimestamp(entry.get("timestamp", 0)).strftime("%d.%m.%Y"),
-            "Video‑Link": entry.get("url_video"),
+            "Video": entry.get("url_video"),
             "Website": entry.get("url_website"),
         }
         table_rows.append(row)
 
     st.subheader("Gefundene Folgen")
-    st.dataframe(table_rows, use_container_width=True)
+    df = pd.DataFrame(table_rows)
+    df["Website"] = df["Website"].apply(
+        lambda url: f'<a href="{url}" target="_blank">zur Seite</a>'
+    )
+    df_display = df.drop(columns=["Video"])
+    st.markdown(
+        df_display.to_html(escape=False, index=False, classes="episode-table"),
+        unsafe_allow_html=True,
+    )
+
+    st.subheader("Folgen abspielen")
+    for row in table_rows:
+        with st.expander(f"{row['Titel']} ({row['Datum']})"):
+            st.write(row["Beschreibung"])
+            st.video(row["Video"])
 
     # Provide a download button for RSS
     rss_xml = build_rss(results)
