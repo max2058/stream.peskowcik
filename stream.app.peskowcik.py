@@ -13,31 +13,45 @@ Authentifizierung.
 """
 
 import json
-from datetime import datetime, timezone
-from typing import List, Dict, Any
+from datetime import datetime, timezone, timedelta
+from typing import List, Dict, Any, Optional
 
+import re
 import requests
 import streamlit as st
 import pandas as pd
 
 
-def build_query(topic: str = "Unser Sandmännchen", title_filter: str = "sorbisch", *, size: int = 20, offset: int = 0) -> str:
+def build_query(
+    *, topic: Optional[str] = "Unser Sandmännchen",
+    title_filter: Optional[str] = None,
+    size: int = 50,
+    offset: int = 0,
+) -> str:
     """Construct a JSON query for the MediathekViewWeb API.
 
+    The search can be limited to a specific topic.  A title_filter can be
+    provided to restrict results by a search term in the title; if
+    ``title_filter`` is None or an empty string, no title filter is applied.
+
     Args:
-        topic: The topic (Sendung) to search for.
-        title_filter: A term that must appear in the title.
-        size: Number of results to fetch.
+        topic: The topic (Sendung) to search for. If None, no topic filter
+            will be applied.
+        title_filter: A term that must appear in the title (optional).
+        size: Number of results to fetch. Larger sizes may be necessary to
+            capture older episodes.
         offset: Offset for pagination.
 
     Returns:
         A JSON‑formatted string for the query parameter.
     """
+    queries: List[Dict[str, Any]] = []
+    if topic:
+        queries.append({"fields": ["topic"], "query": topic})
+    if title_filter:
+        queries.append({"fields": ["title"], "query": title_filter})
     query: Dict[str, Any] = {
-        "queries": [
-            {"fields": ["topic"], "query": topic},
-            {"fields": ["title"], "query": title_filter},
-        ],
+        "queries": queries,
         "sortBy": "timestamp",
         "sortOrder": "desc",
         "future": False,
@@ -72,6 +86,84 @@ def fetch_results(query_json: str) -> List[Dict[str, Any]]:
     # API returns a dict with keys: result, err
     results = data.get("result", {}).get("results", [])
     return results
+
+
+def extract_base64_id(url: str) -> Optional[str]:
+    """Extract the base64‑encoded publication ID from a MediathekViewWeb url.
+
+    The MediathekViewWeb API returns the ``url_website`` field which often
+    ends with a base64‑encoded identifier (e.g. ``.../Y3JpZDovL3JiYl84ZGU4...``).
+    This helper returns that identifier if present.
+
+    Args:
+        url: The website url returned by MediathekViewWeb.
+
+    Returns:
+        The base64 string if one could be extracted, otherwise ``None``.
+    """
+    if not url:
+        return None
+    # The ID is the last path segment after the last slash, and it
+    # consists of base64 characters (letters, digits, +, /, =)
+    parts = url.rstrip("/").split("/")
+    candidate = parts[-1]
+    # Heuristically check if it looks like base64 (no dots or dashes)
+    if re.fullmatch(r"[A-Za-z0-9_\-]+", candidate):
+        return candidate
+    return None
+
+
+def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
+    """Determine whether a MediathekViewWeb entry is a sorbischsprachige Folge.
+
+    The MediathekViewWeb API does not explicitly tag sorbische Folgen.
+    Therefore we attempt several heuristics:
+    1. If ``title`` or ``description`` contain the word "sorbisch" (case‑insensitiv),
+       we assume it is a sorbian episode.
+    2. If the title contains "Peskowcik" or "Pěskowčik", this also indicates a
+       sorbian version.
+    3. Otherwise, if the entry is hosted on the ARD Mediathek (``url_website``
+       contains a base64 id), we query the ARD page‑gateway API for
+       additional metadata.  If the ``longTitle`` or ``mediumTitle`` fields
+       contain "sorbisch", we classify it as sorbian.
+
+    Args:
+        entry: A result dict from the MediathekViewWeb API.
+
+    Returns:
+        True if the episode appears to be sorbian, otherwise False.
+    """
+    title = entry.get("title", "") or ""
+    description = entry.get("description", "") or ""
+    lower_title = title.lower()
+    lower_desc = description.lower()
+    # quick keyword checks
+    if "sorbisch" in lower_title or "sorbisch" in lower_desc:
+        return True
+    # look for sorbian series name
+    if "peskowcik" in lower_title or "pěskowčik" in lower_title:
+        return True
+    # attempt to fetch ARD metadata if available
+    url = entry.get("url_website", "") or ""
+    base64_id = extract_base64_id(url)
+    if not base64_id:
+        return False
+    try:
+        api_url = f"https://api.ardmediathek.de/page-gateway/pages/ard/item/{base64_id}"
+        r = requests.get(api_url, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        # If the ARD API is unreachable or not JSON, we conservatively return False
+        return False
+    # search for sorbisch in longTitle or mediumTitle within all widgets
+    widgets = data.get("widgets", [])
+    for widget in widgets:
+        for key in ("longTitle", "mediumTitle", "title", "shortTitle"):
+            value = widget.get(key)
+            if isinstance(value, str) and "sorbisch" in value.lower():
+                return True
+    return False
 
 
 def convert_timestamp(ts: int) -> str:
@@ -145,16 +237,38 @@ def main() -> None:
     
     # API Query and Fetch
     with st.spinner("Lade Daten von der Mediathek…"):
-        query_json = build_query()
+        # We fetch a larger window of results so that recently
+        # veröffentlichte sorbische Episoden ohne "sorbisch" im Titel
+        # nicht untergehen.  Adjust size if necessary.
+        query_json = build_query(topic="Unser Sandmännchen", title_filter=None, size=200, offset=0)
         results = fetch_results(query_json)
+        # Optionally fetch the next page to cover roughly 100 Tage (each day ~2 Folgen)
+        query_json2 = build_query(topic="Unser Sandmännchen", title_filter=None, size=200, offset=200)
+        results += fetch_results(query_json2)
 
     if not results:
         st.warning("Es wurden keine passenden Einträge gefunden.")
         return
 
-    # Transform results for display
-    table_rows = []
+    # Filter for sorbian episodes
+    sorbian_entries: List[Dict[str, Any]] = []
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
     for entry in results:
+        # Skip entries older than cutoff to save on API calls
+        ts = entry.get("timestamp", 0)
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        if dt < cutoff_date:
+            continue
+        if is_sorbian_episode(entry):
+            sorbian_entries.append(entry)
+
+    if not sorbian_entries:
+        st.warning("Derzeit sind keine sorbischsprachigen Sandmännchen‑Folgen verfügbar.")
+        return
+
+    # Transform sorbian_entries for display
+    table_rows: List[Dict[str, Any]] = []
+    for entry in sorted(sorbian_entries, key=lambda e: e.get("timestamp", 0), reverse=True):
         row = {
             "Titel": entry.get("title"),
             "Beschreibung": entry.get("description"),
@@ -168,7 +282,10 @@ def main() -> None:
     for row in table_rows:
         with st.expander(f"{row['Titel']} ({row['Datum']})"):
             st.write(row["Beschreibung"])
-            st.video(row["Video"])
+            # Some entries may not have a direct video url (e.g. if geoblocked).  Use the
+            # website as fallback when url_video is missing.
+            video_url = row["Video"] or row["Website"]
+            st.video(video_url)
 
     st.subheader("Gefundene Folgen")
     df = pd.DataFrame(table_rows)
@@ -184,7 +301,7 @@ def main() -> None:
     )
 
     # Provide a download button for RSS
-    rss_xml = build_rss(results)
+    rss_xml = build_rss(sorbian_entries)
     st.download_button(
         label="RSS‑Feed herunterladen",
         data=rss_xml,
