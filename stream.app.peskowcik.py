@@ -195,6 +195,9 @@ MANUAL_EPISODES: List[str] = [
     "Y3JpZDovL3JiYl8wMjk5OTNlZS1kOTI4LTRmNjUtYTMzNy00Y2U0MzA4ZDBjMjRfcHVibGljYXRpb24",
     # Pěskowčik: Liška a sroka: Špewaca lisca wopus | 06.07.2025
     "Y3JpZDovL3JiYl8xNDYwZDFhZS1hYTBkLTQ5YjctYTRlYy1kZDZiOWVmNjI1OWRfcHVibGljYXRpb24",
+
+    # Fuchs und Elster: Gestörte Angelfreuden (sorbisch) | 24.08.2025
+    "Y3JpZDovL3JiYl80MDE1ZGU4MS01ZjQwLTRhOWItYjdlNi1kZTQ3ZGU2M2Y5MTVfcHVibGljYXRpb24",
 ]
 
 
@@ -411,9 +414,8 @@ def main() -> None:
                 # Skip german duplicate of Gestörte Angelfreuden if it lacks a base64 ID
                 title_lower = (entry.get("title") or "").strip().lower()
                 if "gestörte angelfreuden" in title_lower or "gestoerte angelfreuden" in title_lower:
-                    # Only keep the version with a base64-coded ID
-                    b64 = extract_base64_id(entry.get("url_website", "")) or extract_base64_id(entry.get("url_video", ""))
-                    if not b64:
+                    # Only include the sorbisch version; require (sorbisch) in the title
+                    if "(sorbisch)" not in title_lower:
                         checked += 1
                         continue
                 # Normalize key components
