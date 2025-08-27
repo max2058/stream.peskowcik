@@ -226,6 +226,12 @@ def fetch_ard_episode(base64_id: str) -> Optional[Dict[str, Any]]:
                     url_video = chosen.get("_stream")
         except Exception:
             url_video = None
+        # Try to extract a preview image
+        image_url = (
+            widget.get("previewImage", {}).get("src")
+            or widget.get("previewImage", {}).get("url")
+            or widget.get("image", {}).get("src")
+        )
         # Build url_website (the ARD public url)
         url_website = f"https://www.ardmediathek.de/video/{base64_id}"
         return {
@@ -238,6 +244,7 @@ def fetch_ard_episode(base64_id: str) -> Optional[Dict[str, Any]]:
             "size": None,
             "url_website": url_website,
             "url_video": url_video,
+            "image_url": image_url,
         }
     return None
 
@@ -297,13 +304,74 @@ def build_rss(results: List[Dict[str, Any]]) -> str:
     return rss_xml.strip()
 
 
+def get_thumbnail(entry: Dict[str, Any]) -> str:
+    """Return a thumbnail image URL for an entry.
+
+    Tries several fields from the entry itself and falls back to fetching
+    details from the ARD API.  If no specific thumbnail can be found, a
+    generic Sandmännchen image is returned.
+
+    Args:
+        entry: Result dictionary from MediathekViewWeb or manual list.
+
+    Returns:
+        URL to an image suitable as a video preview.
+    """
+    thumb = (
+        entry.get("image_url")
+        or entry.get("thumbnail")
+        or entry.get("thumb")
+        or entry.get("image")
+    )
+    if thumb:
+        return thumb
+    base64_id = extract_base64_id(entry.get("url_website", ""))
+    if base64_id:
+        ep = fetch_ard_episode(base64_id)
+        if ep and ep.get("image_url"):
+            return ep["image_url"]
+    return "https://www.mdr.de/sandmann/sandmann824-resimage_v-variantBig24x9_w-2560.jpg?version=55897"
+
+
 def main() -> None:
     st.set_page_config(page_title="Sandmännchen Sorbisch", layout="wide")
+    st.markdown(
+        """
+        <style>
+        .episode-card {
+            background-color: #f8f8f8;
+            border-radius: 8px;
+            padding: 0.5rem;
+            margin-bottom: 1rem;
+            border: 1px solid #ddd;
+        }
+        .episode-card video {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+        }
+        .episode-title {
+            font-weight: 600;
+            margin-top: 0.5rem;
+        }
+        .episode-date {
+            font-size: 0.85rem;
+            color: #666;
+            margin-bottom: 0.5rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     st.image(
         "https://www.mdr.de/sandmann/sandmann824-resimage_v-variantBig24x9_w-2560.jpg?version=55897",
         use_container_width=True,
     )
     st.title("Unser Sandmännchen – Sorbische Folgen")
+    st.markdown(
+        "<span style='color:red; font-weight:bold;'>Diese App befindet sich noch im Aufbau und in der Entwicklung.</span>",
+        unsafe_allow_html=True,
+    )
     st.write(
         "Um sich nicht mit der KiKA- oder ARD-Mediathek herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App."
     )
@@ -433,21 +501,41 @@ def main() -> None:
             "Datum": datetime.fromtimestamp(entry.get("timestamp", 0)).strftime("%d.%m.%Y"),
             "Video": entry.get("url_video"),
             "Website": entry.get("url_website"),
+            "Thumbnail": get_thumbnail(entry),
         }
         table_rows.append(row)
-
+    st.write(f"Aktuelle Anzahl der Online Episoden: {len(table_rows)}")
     st.subheader("Folgen abspielen")
-    for row in table_rows:
-        with st.expander(f"{row['Titel']} ({row['Datum']})"):
-            st.write(row["Beschreibung"])
-            # Some entries may not have a direct video url (e.g. if geoblocked).  Use the
-            # website as fallback when url_video is missing.
-            video_url = row["Video"] or row["Website"]
-            st.video(video_url)
+    cards_per_row = 3
+    for start in range(0, len(table_rows), cards_per_row):
+        cols = st.columns(cards_per_row)
+        for idx, row in enumerate(table_rows[start : start + cards_per_row]):
+            with cols[idx]:
+                video_url = row["Video"] or row["Website"]
+                thumbnail = row["Thumbnail"]
+                if video_url and video_url.endswith(".mp4"):
+                    video_html = (
+                        f"<video controls poster='{thumbnail}'><source src='{video_url}' type='video/mp4'></source></video>"
+                    )
+                else:
+                    video_html = (
+                        f"<a href='{video_url}' target='_blank'><img src='{thumbnail}' alt='Vorschaubild'></a>"
+                    )
+                st.markdown(
+                    f"""
+                    <div class='episode-card'>
+                        {video_html}
+                        <div class='episode-title'>{row['Titel']}</div>
+                        <div class='episode-date'>{row['Datum']}</div>
+                        <p>{row['Beschreibung']}</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
     st.subheader("Gefundene Folgen")
     df = pd.DataFrame(table_rows)
-    df_display = df.drop(columns=["Video"])
+    df_display = df.drop(columns=["Video", "Thumbnail"])
     st.dataframe(
         df_display,
         use_container_width=True,
