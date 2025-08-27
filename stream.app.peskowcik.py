@@ -155,6 +155,17 @@ def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
             return True
     return False
 
+
+def has_strong_keyword(entry: Dict[str, Any]) -> bool:
+    """Return True if entry explicitly mentions sorbian keywords."""
+    title = (entry.get("title") or "").lower()
+    description = (entry.get("description") or "").lower()
+    strong_keywords = ["sorbisch", "peskowcik", "pěskowčik"]
+    for kw in strong_keywords:
+        if kw in title or kw in description:
+            return True
+    return False
+
 # IDs of episodes known to be sorbischsprachig but which may not yet be listed
 # in the MediathekView database.  Each ID corresponds to the base64
 # publication identifier in the ARD Mediathek URL.
@@ -302,20 +313,23 @@ def main() -> None:
     st.markdown(
         """
         <style>
-        .stApp {
-            background-color: #0e0e0e;
-            color: #fafafa;
-        }
         .episode-card {
-            background-color: #1a1a1a;
+            border: 1px solid #ddd;
             border-radius: 8px;
             padding: 0.5rem;
             margin-bottom: 1rem;
+            background-color: #ffffff;
         }
         .episode-card video {
             width: 100%;
             height: auto;
             border-radius: 4px;
+        }
+        .episode-thumb {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
         }
         .episode-title {
             font-weight: 600;
@@ -323,7 +337,7 @@ def main() -> None:
         }
         .episode-date {
             font-size: 0.85rem;
-            color: #ccc;
+            color: #555;
             margin-bottom: 0.5rem;
         }
         </style>
@@ -335,7 +349,10 @@ def main() -> None:
         use_container_width=True,
     )
     st.title("Unser Sandmännchen – Sorbische Folgen")
-    st.info("Diese App befindet sich noch im Aufbau und in der Entwicklung.")
+    st.markdown(
+        "<p style='color:red; font-weight:bold;'>Diese App befindet sich noch im Aufbau und in der Entwicklung.</p>",
+        unsafe_allow_html=True,
+    )
     st.write(
         "Um sich nicht mit der KiKA- oder ARD-Mediathek herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App."
     )
@@ -365,26 +382,16 @@ def main() -> None:
     # additional network request to the ARD API (if used in heuristics),
     # so we limit the number of checks and deduplicate results on the fly.
     #
-    sorbian_entries: List[Dict[str, Any]] = []
-    # Use a set of strings to track unique episodes.  Wherever possible
-    # we deduplicate based on a stable base64 identifier extracted from
-    # the episode URLs.  If no identifier can be found, we fall back
-    # to the normalized title.  We avoid using the timestamp as part
-    # of the deduplication key because some duplicates have different
-    # publication timestamps for the same content.
-    # Use a set of tuples for deduplication.  Each key consists of
-    # (normalized title, normalized description, date string).  This
-    # approach tolerates variations in publication timestamps or URLs but
-    # collapses entries that are effectively identical in content and
-    # broadcast date (e.g. "Fuchs und Elster: Gestörte Angelfreuden" in ARD
-    # and KiKA).  The normalized description ensures that similar titles
-    # with different episode descriptions are treated separately.
-    unique_keys: set[tuple[str, str, str]] = set()
+    sorbian_map: dict[tuple[str, str, str], Dict[str, Any]] = {}
+    # The deduplication key consists of (normalized title, normalized
+    # description, date string).  When a key collision occurs we prefer
+    # the entry that explicitly mentions sorbian keywords so that the
+    # german version of an episode does not replace the sorbian one.
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
     max_checks = 200  # maximum number of entries to examine per page
     max_results = 15  # maximum number of sorbian episodes to collect
     offset = 0
-    while len(sorbian_entries) < max_results:
+    while len(sorbian_map) < max_results:
         # If not the first iteration, fetch the next page
         if offset > 0:
             query_json_page = build_query(topic="Unser Sandmännchen", title_filter=None, size=200, offset=offset)
@@ -409,18 +416,19 @@ def main() -> None:
                 # Normalize key components
                 title_norm = (entry.get("title") or "").strip().lower()
                 desc_norm = (entry.get("description") or "").strip().lower()
-                # Use only the date (not time) for deduplication
                 ts_int = int(entry.get("timestamp", 0))
                 date_str = datetime.fromtimestamp(ts_int, tz=timezone.utc).strftime("%Y-%m-%d") if ts_int else ""
                 key = (title_norm, desc_norm, date_str)
-                if key not in unique_keys:
-                    sorbian_entries.append(entry)
-                    unique_keys.add(key)
-                    if len(sorbian_entries) >= max_results:
+                existing = sorbian_map.get(key)
+                if existing is None or (
+                    has_strong_keyword(entry) and not has_strong_keyword(existing)
+                ):
+                    sorbian_map[key] = entry
+                    if len(sorbian_map) >= max_results:
                         break
             checked += 1
         # Determine whether to fetch another page
-        if cutoff_reached or len(sorbian_entries) >= max_results:
+        if cutoff_reached or len(sorbian_map) >= max_results:
             break
         # If we examined fewer entries than max_checks it means the page
         # contained fewer than max_checks items, so there is no need to
@@ -430,28 +438,25 @@ def main() -> None:
         offset += 200
 
     # Optionally include manually specified episodes that might not yet
-    # appear in the MediathekView database.  These are added after
-    # deduplication so they don't produce duplicates.
+    # appear in the MediathekView database.
     for base64_id in MANUAL_EPISODES:
         try:
-            # only fetch if we still need more episodes or if the id is not yet present
-            # The dedup key for manual episodes is based on title and timestamp,
-            # which we extract after fetch_ard_episode.
             ep = fetch_ard_episode(base64_id)
         except Exception:
             ep = None
         if ep:
-            # For manual episodes, build the same composite key as used for
-            # entries from the API.
             title_norm = (ep.get("title") or "").strip().lower()
             desc_norm = (ep.get("description") or "").strip().lower()
             ts_int = int(ep.get("timestamp", 0))
             date_str = datetime.fromtimestamp(ts_int, tz=timezone.utc).strftime("%Y-%m-%d") if ts_int else ""
             key = (title_norm, desc_norm, date_str)
-            if key not in unique_keys:
-                sorbian_entries.append(ep)
-                unique_keys.add(key)
+            existing = sorbian_map.get(key)
+            if existing is None or (
+                has_strong_keyword(ep) and not has_strong_keyword(existing)
+            ):
+                sorbian_map[key] = ep
 
+    sorbian_entries = list(sorbian_map.values())
     if not sorbian_entries:
         st.warning("Derzeit sind keine sorbischsprachigen Sandmännchen‑Folgen verfügbar.")
         return
@@ -459,15 +464,23 @@ def main() -> None:
     # Transform sorbian_entries for display
     table_rows: List[Dict[str, Any]] = []
     for entry in sorted(sorbian_entries, key=lambda e: e.get("timestamp", 0), reverse=True):
+        thumbnail = (
+            entry.get("image")
+            or entry.get("previewImage")
+            or entry.get("thumbnail")
+            or "https://www.mdr.de/sandmann/sandmann824-resimage_v-variantBig24x9_w-2560.jpg?version=55897"
+        )
         row = {
             "Titel": entry.get("title"),
             "Beschreibung": entry.get("description"),
             "Datum": datetime.fromtimestamp(entry.get("timestamp", 0)).strftime("%d.%m.%Y"),
             "Video": entry.get("url_video"),
             "Website": entry.get("url_website"),
+            "Bild": thumbnail,
         }
         table_rows.append(row)
 
+    st.write(f"Aktuelle Anzahl der Online Episoden: {len(table_rows)}")
     st.subheader("Folgen abspielen")
     cards_per_row = 3
     for start in range(0, len(table_rows), cards_per_row):
@@ -475,12 +488,15 @@ def main() -> None:
         for idx, row in enumerate(table_rows[start : start + cards_per_row]):
             with cols[idx]:
                 video_url = row["Video"] or row["Website"]
+                thumb_url = row["Bild"]
                 if video_url and video_url.endswith(".mp4"):
                     video_html = (
-                        f"<video controls><source src='{video_url}' type='video/mp4'></video>"
+                        f"<video controls poster='{thumb_url}'><source src='{video_url}' type='video/mp4'></video>"
                     )
                 else:
-                    video_html = f"<a href='{video_url}' target='_blank'>zur Folge</a>"
+                    video_html = (
+                        f"<a href='{video_url}' target='_blank'><img src='{thumb_url}' class='episode-thumb'/></a>"
+                    )
                 st.markdown(
                     f"""
                     <div class='episode-card'>
@@ -495,7 +511,7 @@ def main() -> None:
 
     st.subheader("Gefundene Folgen")
     df = pd.DataFrame(table_rows)
-    df_display = df.drop(columns=["Video"])
+    df_display = df.drop(columns=["Video", "Bild"])
     st.dataframe(
         df_display,
         use_container_width=True,
