@@ -137,8 +137,12 @@ def main() -> None:
     )
     st.title("Unser Sandmännchen – Sorbische Folgen")
     st.write(
+        "Um sich nicht mit der KiKA- oder ARD-Mediathek herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App."
+    )
+    st.write(
         "Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen."
     )
+    
     st.markdown(
         """
         <style>
