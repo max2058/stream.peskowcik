@@ -88,28 +88,31 @@ def fetch_results(query_json: str) -> List[Dict[str, Any]]:
     return results
 
 
-def extract_base64_id(url: str) -> Optional[str]:
-    """Extract the base64‑encoded publication ID from a MediathekViewWeb url.
+def extract_episode_id(url: str) -> Optional[str]:
+    """Extract a stable episode identifier from a URL.
 
-    The MediathekViewWeb API returns the ``url_website`` field which often
-    ends with a base64‑encoded identifier (e.g. ``.../Y3JpZDovL3JiYl84ZGU4...``).
-    This helper returns that identifier if present.
+    The identifier is expected to be contained in the last path segment of
+    the URL.  Any query string or file extension is stripped before
+    validation.  If the cleaned segment contains only ``[A-Za-z0-9_-]``
+    characters it is returned as the identifier (covering both base64 IDs
+    and simple slugs).
 
     Args:
-        url: The website url returned by MediathekViewWeb.
+        url: The website or video URL returned by MediathekViewWeb or the
+            ARD Mediathek.
 
     Returns:
-        The base64 string if one could be extracted, otherwise ``None``.
+        The cleaned identifier if one could be extracted, otherwise ``None``.
     """
     if not url:
         return None
-    # The ID is the last path segment after the last slash, and it
-    # consists of base64 characters (letters, digits, +, /, =)
-    parts = url.rstrip("/").split("/")
-    candidate = parts[-1]
-    # Heuristically check if it looks like base64 (no dots or dashes)
-    if re.fullmatch(r"[A-Za-z0-9_\-]+", candidate):
-        return candidate
+    # Remove query string and select last path segment
+    path = url.split("?", 1)[0]
+    segment = path.rstrip("/").split("/")[-1]
+    # Drop file extension if present
+    segment = segment.split(".", 1)[0]
+    if re.fullmatch(r"[A-Za-z0-9_-]+", segment):
+        return segment
     return None
 
 
@@ -363,8 +366,8 @@ def main() -> None:
             if is_sorbian_episode(entry):
                 stable_id = (
                     entry.get("id")
-                    or extract_base64_id(entry.get("url_video", ""))
-                    or extract_base64_id(entry.get("url_website", ""))
+                    or extract_episode_id(entry.get("url_video", ""))
+                    or extract_episode_id(entry.get("url_website", ""))
                 )
                 if stable_id:
                     key = str(stable_id)
@@ -397,13 +400,14 @@ def main() -> None:
         except Exception:
             ep = None
         if ep:
-            # Prefer the explicit base64 id or other stable identifiers; fall back to title when missing.
+            # Prefer the explicit base64 id or other stable identifiers (episode id or slug);
+            # fall back to title when missing.
             title_norm = (ep.get("title") or "").strip().lower()
             key = (
                 base64_id
                 or ep.get("id")
-                or extract_base64_id(ep.get("url_video", ""))
-                or extract_base64_id(ep.get("url_website", ""))
+                or extract_episode_id(ep.get("url_video", ""))
+                or extract_episode_id(ep.get("url_website", ""))
                 or title_norm
             )
             key_str = str(key)
