@@ -88,29 +88,37 @@ def fetch_results(query_json: str) -> List[Dict[str, Any]]:
     return results
 
 
-def extract_base64_id(url: str) -> Optional[str]:
-    """Extract the base64‑encoded publication ID from a MediathekViewWeb url.
+def extract_episode_id(url: str) -> Optional[str]:
+    """Extract a stable episode identifier from a MediathekViewWeb or ARD url.
 
-    The MediathekViewWeb API returns the ``url_website`` field which often
-    ends with a base64‑encoded identifier (e.g. ``.../Y3JpZDovL3JiYl84ZGU4...``).
-    This helper returns that identifier if present.
+    The last path segment can either be a base64 string or a slug.  Any query
+    string or file extension is stripped before validation.  The function
+    returns the cleaned segment if it only contains characters from
+    ``[A-Za-z0-9_-]``; otherwise ``None`` is returned.
 
     Args:
-        url: The website url returned by MediathekViewWeb.
+        url: The website or video url returned by MediathekViewWeb.
 
     Returns:
-        The base64 string if one could be extracted, otherwise ``None``.
+        A base64 id or slug if one could be extracted, otherwise ``None``.
     """
     if not url:
         return None
-    # The ID is the last path segment after the last slash, and it
-    # consists of base64 characters (letters, digits, +, /, =)
-    parts = url.rstrip("/").split("/")
-    candidate = parts[-1]
-    # Heuristically check if it looks like base64 (no dots or dashes)
-    if re.fullmatch(r"[A-Za-z0-9_\-]+", candidate):
-        return candidate
+    segment = url.rstrip("/").split("/")[-1]
+    segment = segment.split("?", 1)[0].split("#", 1)[0]
+    segment = re.sub(r"\.[A-Za-z0-9]+$", "", segment)
+    if re.fullmatch(r"[A-Za-z0-9_-]+", segment):
+        return segment
     return None
+
+
+def normalize_title(title: str) -> str:
+    """Normalize a title for deduplication.
+
+    Everything after the first pipe character is removed and the remaining
+    part is stripped and lowercased.
+    """
+    return title.split("|", 1)[0].strip().lower()
 
 
 def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
@@ -331,7 +339,10 @@ def main() -> None:
     # so we limit the number of checks and deduplicate results on the fly.
     #
     sorbian_entries: List[Dict[str, Any]] = []
-    unique_keys: set[tuple[str, int]] = set()
+    # Use a string set for deduplication. Prefer a stable episode identifier
+    # extracted from the url; fall back to a combination of title and
+    # timestamp when no id can be determined.
+    unique_keys: set[str] = set()
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
     max_checks = 200  # maximum number of entries to examine per page
     max_results = 15  # maximum number of sorbian episodes to collect
@@ -358,9 +369,14 @@ def main() -> None:
                 cutoff_reached = True
                 break
             if is_sorbian_episode(entry):
-                # use (normalized title, timestamp) as a deduplication key
-                title = (entry.get("title") or "").strip().lower()
-                key = (title, ts)
+                entry_id = entry.get("id")
+                episode_id = extract_episode_id(entry.get("url_website", "")) or extract_episode_id(entry.get("url_video", ""))
+                if entry_id:
+                    key = str(entry_id)
+                elif episode_id:
+                    key = episode_id
+                else:
+                    key = normalize_title(entry.get("title") or "")
                 if key not in unique_keys:
                     sorbian_entries.append(entry)
                     unique_keys.add(key)
@@ -383,15 +399,13 @@ def main() -> None:
     for base64_id in MANUAL_EPISODES:
         try:
             # only fetch if we still need more episodes or if the id is not yet present
-            # The dedup key for manual episodes is based on title and timestamp,
-            # which we extract after fetch_ard_episode.
             ep = fetch_ard_episode(base64_id)
         except Exception:
             ep = None
         if ep:
-            title_norm = (ep.get("title") or "").strip().lower()
-            ts = ep.get("timestamp", 0)
-            key = (title_norm, ts)
+            # Prefer the explicit base64 id; fall back to identifiers from the urls or the normalized title.
+            title_norm = normalize_title(ep.get("title") or "")
+            key = base64_id or extract_episode_id(ep.get("url_website", "")) or extract_episode_id(ep.get("url_video", "")) or title_norm
             if key not in unique_keys:
                 sorbian_entries.append(ep)
                 unique_keys.add(key)
