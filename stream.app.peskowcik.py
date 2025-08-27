@@ -152,6 +152,92 @@ def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
             return True
     return False
 
+# IDs of episodes known to be sorbischsprachig but which may not yet be listed
+# in the MediathekView database.  Each ID corresponds to the base64
+# publication identifier in the ARD Mediathek URL.
+MANUAL_EPISODES: List[str] = [
+    # Pěskowčik: Plumps: Suwa mróčele | 29.06.2025
+    "Y3JpZDovL3JiYl8wMjk5OTNlZS1kOTI4LTRmNjUtYTMzNy00Y2U0MzA4ZDBjMjRfcHVibGljYXRpb24",
+    # Pěskowčik: Liška a sroka: Špewaca lisca wopus | 06.07.2025
+    "Y3JpZDovL3JiYl8xNDYwZDFhZS1hYTBkLTQ5YjctYTRlYy1kZDZiOWVmNjI1OWRfcHVibGljYXRpb24",
+]
+
+
+def fetch_ard_episode(base64_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch episode details directly from the ARD page‑gateway API.
+
+    This function retrieves the metadata for a given episode ID and extracts
+    a minimal set of fields (title, description, timestamp, url_video,
+    url_website) that mirror the structure returned by MediathekView.  If
+    anything goes wrong (network error, unexpected JSON), None is returned.
+
+    Args:
+        base64_id: The base64‑encoded publication ID found in ARD URLs.
+
+    Returns:
+        A dict with the same keys as MediathekView entries or None on error.
+    """
+    api_url = f"https://api.ardmediathek.de/page-gateway/pages/ard/item/{base64_id}"
+    try:
+        resp = requests.get(api_url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return None
+    # Attempt to locate an episode widget
+    widgets = data.get("widgets", [])
+    for widget in widgets:
+        # ensure this is the episode we want (EPISODE and has mediaCollection)
+        if not widget.get("mediaCollection"):
+            continue
+        # Extract titles
+        title = widget.get("longTitle") or widget.get("mediumTitle") or widget.get("title") or ""
+        description = widget.get("longSynopsis") or widget.get("synopsis") or ""
+        # Extract timestamp from broadcastedOn
+        ts_str = widget.get("broadcastedOn")
+        if ts_str:
+            try:
+                dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                timestamp = int(dt.timestamp())
+            except Exception:
+                timestamp = 0
+        else:
+            timestamp = 0
+        # Extract video URL (pick first available mp4)
+        url_video = None
+        try:
+            media_array = widget["mediaCollection"]["embedded"]["_mediaArray"]
+            # _mediaArray is a list; take first element
+            if media_array:
+                stream_array = media_array[0]["_mediaStreamArray"]
+                # choose the stream with 720p or fallback to the first
+                chosen = None
+                for s in stream_array:
+                    # Some entries use numeric quality keys; others use string
+                    if s.get("_height") == 720 or s.get("_quality") in ("avc720", 3):
+                        chosen = s
+                        break
+                if chosen is None and stream_array:
+                    chosen = stream_array[0]
+                if chosen:
+                    url_video = chosen.get("_stream")
+        except Exception:
+            url_video = None
+        # Build url_website (the ARD public url)
+        url_website = f"https://www.ardmediathek.de/video/{base64_id}"
+        return {
+            "channel": widget.get("publisher", {}).get("name", "RBB"),
+            "topic": "Unser Sandmännchen",
+            "title": title,
+            "description": description,
+            "timestamp": timestamp,
+            "duration": widget.get("duration"),
+            "size": None,
+            "url_website": url_website,
+            "url_video": url_video,
+        }
+    return None
+
 
 def convert_timestamp(ts: int) -> str:
     """Convert Unix timestamp (seconds) to RFC822 formatted string."""
@@ -237,12 +323,15 @@ def main() -> None:
         st.warning("Es wurden keine passenden Einträge gefunden.")
         return
 
+    #
     # Filter for sorbian episodes.  To avoid long load times, we examine
     # only a subset of the most recent entries and fetch subsequent
     # pages only if necessary.  Checking each entry may trigger an
-    # additional network request to the ARD API, so we limit the number
-    # of checks.
+    # additional network request to the ARD API (if used in heuristics),
+    # so we limit the number of checks and deduplicate results on the fly.
+    #
     sorbian_entries: List[Dict[str, Any]] = []
+    unique_keys: set[tuple[str, int]] = set()
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
     max_checks = 200  # maximum number of entries to examine per page
     max_results = 15  # maximum number of sorbian episodes to collect
@@ -269,9 +358,14 @@ def main() -> None:
                 cutoff_reached = True
                 break
             if is_sorbian_episode(entry):
-                sorbian_entries.append(entry)
-                if len(sorbian_entries) >= max_results:
-                    break
+                # use (normalized title, timestamp) as a deduplication key
+                title = (entry.get("title") or "").strip().lower()
+                key = (title, ts)
+                if key not in unique_keys:
+                    sorbian_entries.append(entry)
+                    unique_keys.add(key)
+                    if len(sorbian_entries) >= max_results:
+                        break
             checked += 1
         # Determine whether to fetch another page
         if cutoff_reached or len(sorbian_entries) >= max_results:
@@ -282,6 +376,25 @@ def main() -> None:
         if checked < max_checks:
             break
         offset += 200
+
+    # Optionally include manually specified episodes that might not yet
+    # appear in the MediathekView database.  These are added after
+    # deduplication so they don't produce duplicates.
+    for base64_id in MANUAL_EPISODES:
+        try:
+            # only fetch if we still need more episodes or if the id is not yet present
+            # The dedup key for manual episodes is based on title and timestamp,
+            # which we extract after fetch_ard_episode.
+            ep = fetch_ard_episode(base64_id)
+        except Exception:
+            ep = None
+        if ep:
+            title_norm = (ep.get("title") or "").strip().lower()
+            ts = ep.get("timestamp", 0)
+            key = (title_norm, ts)
+            if key not in unique_keys:
+                sorbian_entries.append(ep)
+                unique_keys.add(key)
 
     if not sorbian_entries:
         st.warning("Derzeit sind keine sorbischsprachigen Sandmännchen‑Folgen verfügbar.")
