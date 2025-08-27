@@ -103,12 +103,15 @@ def extract_base64_id(url: str) -> Optional[str]:
     """
     if not url:
         return None
-    # The ID is the last path segment after the last slash, and it
-    # consists of base64 characters (letters, digits, +, /, =)
+    # The ID is the last path segment after the last slash.
     parts = url.rstrip("/").split("/")
     candidate = parts[-1]
-    # Heuristically check if it looks like base64 (no dots or dashes)
-    if re.fullmatch(r"[A-Za-z0-9_\-]+", candidate):
+    # Only return IDs that look like ARD's base64-encoded CRIDs.  These
+    # identifiers always start with "Y3Jp" (the base64 encoding of "crid").
+    # We avoid returning shorter slugs (e.g. Kika URLs), because those
+    # would defeat our deduplication logic.  If the candidate does not
+    # start with this prefix, we consider it not to be a base64 ID.
+    if candidate.startswith("Y3Jp"):
         return candidate
     return None
 
