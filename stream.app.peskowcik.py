@@ -302,20 +302,23 @@ def main() -> None:
     st.markdown(
         """
         <style>
-        .stApp {
-            background-color: #0e0e0e;
-            color: #fafafa;
-        }
         .episode-card {
-            background-color: #1a1a1a;
+            border: 1px solid #ddd;
             border-radius: 8px;
             padding: 0.5rem;
             margin-bottom: 1rem;
+            background-color: #ffffff;
         }
         .episode-card video {
             width: 100%;
             height: auto;
             border-radius: 4px;
+        }
+        .episode-thumb {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
         }
         .episode-title {
             font-weight: 600;
@@ -323,7 +326,7 @@ def main() -> None:
         }
         .episode-date {
             font-size: 0.85rem;
-            color: #ccc;
+            color: #555;
             margin-bottom: 0.5rem;
         }
         </style>
@@ -335,7 +338,10 @@ def main() -> None:
         use_container_width=True,
     )
     st.title("Unser Sandmännchen – Sorbische Folgen")
-    st.info("Diese App befindet sich noch im Aufbau und in der Entwicklung.")
+    st.markdown(
+        "<p style='color:red; font-weight:bold;'>Diese App befindet sich noch im Aufbau und in der Entwicklung.</p>",
+        unsafe_allow_html=True,
+    )
     st.write(
         "Um sich nicht mit der KiKA- oder ARD-Mediathek herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App."
     )
@@ -459,15 +465,23 @@ def main() -> None:
     # Transform sorbian_entries for display
     table_rows: List[Dict[str, Any]] = []
     for entry in sorted(sorbian_entries, key=lambda e: e.get("timestamp", 0), reverse=True):
+        thumbnail = (
+            entry.get("image")
+            or entry.get("previewImage")
+            or entry.get("thumbnail")
+            or "https://www.mdr.de/sandmann/sandmann824-resimage_v-variantBig24x9_w-2560.jpg?version=55897"
+        )
         row = {
             "Titel": entry.get("title"),
             "Beschreibung": entry.get("description"),
             "Datum": datetime.fromtimestamp(entry.get("timestamp", 0)).strftime("%d.%m.%Y"),
             "Video": entry.get("url_video"),
             "Website": entry.get("url_website"),
+            "Bild": thumbnail,
         }
         table_rows.append(row)
 
+    st.write(f"Aktuelle Anzahl der Online Episoden: {len(table_rows)}")
     st.subheader("Folgen abspielen")
     cards_per_row = 3
     for start in range(0, len(table_rows), cards_per_row):
@@ -475,12 +489,15 @@ def main() -> None:
         for idx, row in enumerate(table_rows[start : start + cards_per_row]):
             with cols[idx]:
                 video_url = row["Video"] or row["Website"]
+                thumb_url = row["Bild"]
                 if video_url and video_url.endswith(".mp4"):
                     video_html = (
-                        f"<video controls><source src='{video_url}' type='video/mp4'></video>"
+                        f"<video controls poster='{thumb_url}'><source src='{video_url}' type='video/mp4'></video>"
                     )
                 else:
-                    video_html = f"<a href='{video_url}' target='_blank'>zur Folge</a>"
+                    video_html = (
+                        f"<a href='{video_url}' target='_blank'><img src='{thumb_url}' class='episode-thumb'/></a>"
+                    )
                 st.markdown(
                     f"""
                     <div class='episode-card'>
@@ -495,7 +512,7 @@ def main() -> None:
 
     st.subheader("Gefundene Folgen")
     df = pd.DataFrame(table_rows)
-    df_display = df.drop(columns=["Video"])
+    df_display = df.drop(columns=["Video", "Bild"])
     st.dataframe(
         df_display,
         use_container_width=True,
