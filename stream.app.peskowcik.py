@@ -240,27 +240,61 @@ def main() -> None:
         # We fetch a larger window of results so that recently
         # veröffentlichte sorbische Episoden ohne "sorbisch" im Titel
         # nicht untergehen.  Adjust size if necessary.
+        # Fetch the first page of results for "Unser Sandmännchen".  We start
+        # with 200 items which correspond to roughly 100 Sendetage (ca. zwei
+        # Folgen pro Tag).  We fetch the second page only if needed later.
         query_json = build_query(topic="Unser Sandmännchen", title_filter=None, size=200, offset=0)
         results = fetch_results(query_json)
-        # Optionally fetch the next page to cover roughly 100 Tage (each day ~2 Folgen)
-        query_json2 = build_query(topic="Unser Sandmännchen", title_filter=None, size=200, offset=200)
-        results += fetch_results(query_json2)
 
     if not results:
         st.warning("Es wurden keine passenden Einträge gefunden.")
         return
 
-    # Filter for sorbian episodes
+    # Filter for sorbian episodes.  To avoid long load times, we examine
+    # only a subset of the most recent entries and fetch subsequent
+    # pages only if necessary.  Checking each entry may trigger an
+    # additional network request to the ARD API, so we limit the number
+    # of checks.
     sorbian_entries: List[Dict[str, Any]] = []
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
-    for entry in results:
-        # Skip entries older than cutoff to save on API calls
-        ts = entry.get("timestamp", 0)
-        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-        if dt < cutoff_date:
-            continue
-        if is_sorbian_episode(entry):
-            sorbian_entries.append(entry)
+    max_checks = 200  # maximum number of entries to examine per page
+    max_results = 15  # maximum number of sorbian episodes to collect
+    offset = 0
+    while len(sorbian_entries) < max_results:
+        # If not the first iteration, fetch the next page
+        if offset > 0:
+            query_json_page = build_query(topic="Unser Sandmännchen", title_filter=None, size=200, offset=offset)
+            page_results = fetch_results(query_json_page)
+            if not page_results:
+                break
+            results_page = page_results
+        else:
+            results_page = results
+        checked = 0
+        cutoff_reached = False
+        for entry in results_page:
+            if checked >= max_checks:
+                break
+            ts = entry.get("timestamp", 0)
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            if dt < cutoff_date:
+                # break early once we reach the cutoff date
+                cutoff_reached = True
+                break
+            if is_sorbian_episode(entry):
+                sorbian_entries.append(entry)
+                if len(sorbian_entries) >= max_results:
+                    break
+            checked += 1
+        # Determine whether to fetch another page
+        if cutoff_reached or len(sorbian_entries) >= max_results:
+            break
+        # If we examined fewer entries than max_checks it means the page
+        # contained fewer than max_checks items, so there is no need to
+        # request further pages.
+        if checked < max_checks:
+            break
+        offset += 200
 
     if not sorbian_entries:
         st.warning("Derzeit sind keine sorbischsprachigen Sandmännchen‑Folgen verfügbar.")
