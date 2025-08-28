@@ -1,10 +1,9 @@
 """
-Streamlit app to display sorbischsprachige Folgen von "Unser Sandmännchen".
+Eine Streamlit App für sorbischsprachige Folgen vom Sandmann – Pěskowčik.
 
-Dieses Skript ruft die MediathekViewWeb‑API auf und filtert nach
-Folgen, bei denen das Thema "Unser Sandmännchen" ist und deren Titel
-den Begriff "sorbisch" enthalten. Die Ergebnisse werden in einer
-tabelle angezeigt und können als einfacher RSS‑Feed heruntergeladen
+Dieses Skript ruft die MediathekViewWeb‑API auf und filtert nach entsprechenden
+Folgen. 
+Die Ergebnisse werden in einer Tabelle angezeigt und können als einfacher RSS‑Feed heruntergeladen
 werden.
 
 Die App ist so gestaltet, dass sie sich auf streamlit.io hosten lässt.
@@ -26,7 +25,7 @@ from pathlib import Path
 import streamlit.components.v1 as components
 
 
-DEFAULT_THUMBNAIL = Path(__file__).with_name("sandmann_preview.png").read_bytes()
+DEFAULT_THUMBNAIL = Path(__file__).parent / "assets" / "images" / "sandmann_preview.png"
 # Data URL for use as <video poster="...">
 THUMBNAIL_DATA_URL = "data:image/png;base64," + base64.b64encode(DEFAULT_THUMBNAIL).decode("ascii")
 
@@ -39,7 +38,7 @@ def build_query(
 ) -> str:
     """Construct a JSON query for the MediathekViewWeb API.
 
-    The search can be limited to a specific topic.  A title_filter can be
+    The search can be limited to a specific topic. A title_filter can be
     provided to restrict results by a search term in the title; if
     ``title_filter`` is None or an empty string, no title filter is applied.
 
@@ -72,7 +71,7 @@ def build_query(
 
 def fetch_results(query_json: str) -> List[Dict[str, Any]]:
     """Call the MediathekViewWeb API and return the results list.
-
+    
     Args:
         query_json: The JSON query string to include in the URL.
 
@@ -133,7 +132,7 @@ def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
     pattern matching in the ``title`` and ``description`` fields.
 
     Known sorbische Folgen typically include the words "sorbisch" or
-    "Pěskowčik" (oder "Peskowcik") in ihrem Titel.  Die Folge
+    "Pěskowčik" (oder "Peskowcik") in ihrem Titel. Die Folge
     "Fuchs und Elster: Gestörte Angelfreuden" enthält zwar kein
     "sorbisch", hat aber einen einzigartigen Folgentitel.  Daher
     ergänzen wir eine Liste von Schlüsselbegriffen, die auf sorbische
@@ -513,7 +512,7 @@ def main() -> None:
         }
         table_rows.append(row)
 
-    st.subheader("Aktuelle Folgen jetzt Steamen")
+    st.subheader("Aktuelle Folgen jetzt Streamen")
 
     # No JS toggles or theme-specific button styles to keep things snappy and consistent
     cols = st.columns(3)
@@ -566,7 +565,7 @@ def main() -> None:
         column_config={
             "Beschreibung": st.column_config.TextColumn("Beschreibung", width="medium"),
             "Website": st.column_config.LinkColumn("Website", display_text="zur Seite"),
-            #"Vorschau": st.column_config.ImageColumn("Vorschau", width="small"),
+            "Vorschau": st.column_config.ImageColumn("Vorschau", width="small"),
         },
     )
 
