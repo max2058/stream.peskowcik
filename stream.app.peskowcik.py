@@ -1,10 +1,9 @@
 """
-Streamlit app to display sorbischsprachige Folgen von "Unser Sandmännchen".
+Eine Streamlit App für sorbischsprachige Folgen vom Sandmann – Pěskowčik.
 
-Dieses Skript ruft die MediathekViewWeb‑API auf und filtert nach
-Folgen, bei denen das Thema "Unser Sandmännchen" ist und deren Titel
-den Begriff "sorbisch" enthalten. Die Ergebnisse werden in einer
-tabelle angezeigt und können als einfacher RSS‑Feed heruntergeladen
+Dieses Skript ruft die MediathekViewWeb‑API auf und filtert nach entsprechenden
+Folgen. 
+Die Ergebnisse werden in einer Tabelle angezeigt und können als einfacher RSS‑Feed heruntergeladen
 werden.
 
 Die App ist so gestaltet, dass sie sich auf streamlit.io hosten lässt.
@@ -26,7 +25,32 @@ from pathlib import Path
 import streamlit.components.v1 as components
 
 
-DEFAULT_THUMBNAIL = Path(__file__).with_name("sandmann_preview.png").read_bytes()
+def _load_default_thumbnail_bytes() -> bytes:
+    """Load thumbnail bytes from common locations or fall back to a tiny PNG.
+
+    Tries `assets/images/sandmann_preview.png` relative to this file first,
+    then the legacy location next to the script. If neither exists, returns a
+    1x1 transparent PNG so the app can still render without crashing.
+    """
+    candidates = [
+        Path(__file__).parent / "assets" / "images" / "sandmann_preview.png",
+        Path(__file__).with_name("sandmann_preview.png"),
+    ]
+    for p in candidates:
+        try:
+            if p.exists():
+                return p.read_bytes()
+        except Exception:
+            # ignore and try next
+            pass
+    # 1x1 transparent PNG (base64)
+    pixel_b64 = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+    )
+    return base64.b64decode(pixel_b64)
+
+
+DEFAULT_THUMBNAIL = _load_default_thumbnail_bytes()
 # Data URL for use as <video poster="...">
 THUMBNAIL_DATA_URL = "data:image/png;base64," + base64.b64encode(DEFAULT_THUMBNAIL).decode("ascii")
 
@@ -39,7 +63,7 @@ def build_query(
 ) -> str:
     """Construct a JSON query for the MediathekViewWeb API.
 
-    The search can be limited to a specific topic.  A title_filter can be
+    The search can be limited to a specific topic. A title_filter can be
     provided to restrict results by a search term in the title; if
     ``title_filter`` is None or an empty string, no title filter is applied.
 
@@ -72,7 +96,7 @@ def build_query(
 
 def fetch_results(query_json: str) -> List[Dict[str, Any]]:
     """Call the MediathekViewWeb API and return the results list.
-
+    
     Args:
         query_json: The JSON query string to include in the URL.
 
@@ -133,7 +157,7 @@ def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
     pattern matching in the ``title`` and ``description`` fields.
 
     Known sorbische Folgen typically include the words "sorbisch" or
-    "Pěskowčik" (oder "Peskowcik") in ihrem Titel.  Die Folge
+    "Pěskowčik" (oder "Peskowcik") in ihrem Titel. Die Folge
     "Fuchs und Elster: Gestörte Angelfreuden" enthält zwar kein
     "sorbisch", hat aber einen einzigartigen Folgentitel.  Daher
     ergänzen wir eine Liste von Schlüsselbegriffen, die auf sorbische
@@ -373,11 +397,20 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     st.info("Diese App befindet sich noch im Aufbau und in der Entwicklung")
-    st.write(
-        "Um sich nicht mit Mediatheken oder Google herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App."
-    )
-    st.write(
-        "Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen. https://github.com/max2058/stream.peskowcik"
+    st.markdown(
+    """
+    Um sich nicht mit Mediatheken oder Google herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App.
+
+    Bei der Entwicklung musste ich leider feststellen:
+    1. Nicht immer bekommt eine sorbische Episode auch einen sorbischsprachigen Titel und Beschreibung – manchmal ist alles nur auf Deutsch.
+    2. Es kam schon vor, dass im Titel **Plumps** steht, dich aber in der Episode **Fuchs und Elster** begrüßen.
+    Das liegt nicht an der API oder dieser App, sondern direkt an der ARD-Mediathek!
+       
+    Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen. 
+    https://github.com/max2058/stream.peskowcik
+    
+    
+    """
     )
     
     # API Query and Fetch
@@ -513,7 +546,7 @@ def main() -> None:
         }
         table_rows.append(row)
 
-    st.subheader("Aktuelle Folgen jetzt Steamen")
+    st.subheader("Aktuelle Folgen jetzt Streamen")
 
     # No JS toggles or theme-specific button styles to keep things snappy and consistent
     cols = st.columns(3)
@@ -566,7 +599,7 @@ def main() -> None:
         column_config={
             "Beschreibung": st.column_config.TextColumn("Beschreibung", width="medium"),
             "Website": st.column_config.LinkColumn("Website", display_text="zur Seite"),
-            #"Vorschau": st.column_config.ImageColumn("Vorschau", width="small"),
+            "Vorschau": st.column_config.ImageColumn("Vorschau", width="small"),
         },
     )
 
