@@ -406,7 +406,9 @@ def main() -> None:
     2. Es kam schon vor, dass im Titel **Plumps** steht, dich aber in der Episode **Fuchs und Elster** begrüßen.
     Das liegt nicht an der API oder dieser App, sondern direkt an der ARD-Mediathek!
        
-    Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen.\nhttps://github.com/max2058/stream.peskowcik
+    Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen. 
+    
+    https://github.com/max2058/stream.peskowcik
     """
     )
     
