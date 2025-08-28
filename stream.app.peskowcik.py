@@ -13,6 +13,7 @@ Authentifizierung.
 """
 
 import json
+from html import escape as html_escape
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 
@@ -347,6 +348,25 @@ def main() -> None:
         use_container_width=True,
     )
     st.title("Pěskowčik – Stream Now!")
+    # Lightweight UI tweaks for clearer episode cards
+    st.markdown(
+        """
+        <style>
+        /* Episode card: make titles prominent and descriptions subtler */
+        .episode-title { font-size: 1.15rem; font-weight: 700; margin: 0 0 .35rem 0; }
+        .episode-meta { font-size: .9rem; opacity: .8; margin: -.2rem 0 .35rem 0; }
+        .episode-desc { font-size: .95rem; line-height: 1.45; opacity: .9; position: relative; }
+        .episode-desc.collapsed { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+        .episode-desc.collapsed::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2.5em;
+            background: linear-gradient(180deg, rgba(13,17,23,0) 0%, rgba(13,17,23,.85) 100%); pointer-events: none; }
+        /* Semi-transparent toggle button styling */
+        div.stButton > button { background: rgba(255,255,255,.08); color: inherit; border: 1px solid rgba(255,255,255,.25);
+            padding: .25rem .6rem; font-size: .85rem; border-radius: .5rem; }
+        div.stButton > button:hover { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.35); }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     st.info("Diese App befindet sich noch im Aufbau und in der Entwicklung")
     st.write(
         "Um sich nicht mit Mediatheken oder Google herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App."
@@ -489,12 +509,29 @@ def main() -> None:
         table_rows.append(row)
 
     st.subheader("Aktuelle Folgen jetzt Steamen")
+
+    def _toggle_state(key: str) -> None:
+        st.session_state[key] = not st.session_state.get(key, False)
     cols = st.columns(3)
     for idx, row in enumerate(table_rows):
         col = cols[idx % 3]
         with col:
-            st.caption(f"{row['Titel']} ({row['Datum']})")
-            st.write(row["Beschreibung"])
+            # Prominent title + smaller meta date line
+            st.markdown(
+                f"<div class='episode-title'>{html_escape(str(row['Titel'] or ''))}</div>"
+                f"<div class='episode-meta'>{html_escape(str(row['Datum'] or ''))}</div>",
+                unsafe_allow_html=True,
+            )
+
+            # Collapsible description limited to 4 lines by default
+            desc_key = f"desc_expanded_{idx}"
+            expanded = st.session_state.get(desc_key, False)
+            desc_class = "episode-desc" + ("" if expanded else " collapsed")
+            st.markdown(
+                f"<div class='{desc_class}'>" + html_escape(str(row.get('Beschreibung') or "")) + "</div>",
+                unsafe_allow_html=True,
+            )
+            st.button("Weniger anzeigen" if expanded else "Mehr anzeigen", key=f"btn_{idx}", on_click=_toggle_state, args=(desc_key,))
             # Some entries may not have a direct video url (e.g. if geoblocked). Use the
             # website as fallback when url_video is missing.
             video_url = row["Video"]
