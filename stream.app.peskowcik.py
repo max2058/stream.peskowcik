@@ -401,6 +401,11 @@ def main() -> None:
         "Um sich nicht mit Mediatheken oder Google herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App."
     )
     st.write(
+        "Bei der Entwicklung musste ich Leider feststellen.: "
+        "1. Nicht immer bekommt eine Sorbische Episode auch einen Sorbischsprachigen Titel und Beschreibung. Er ist manchmal einfach Deutsch."
+        "2. Es kam schon vor, dass im Titel steht 'Plumps' und in der Episode begrüßt dich dann 'Fuchs und Elster'. Dies hat nichts mit der API oder dieser App zu tun, sondern ist dann auch auf der ARD Mediatheken Seite selbst falsch!"
+    )
+    st.write(
         "Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen. https://github.com/max2058/stream.peskowcik"
     )
     
