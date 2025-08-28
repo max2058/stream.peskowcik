@@ -407,8 +407,9 @@ def main() -> None:
     Das liegt nicht an der API oder dieser App, sondern direkt an der ARD-Mediathek!
        
     Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen. 
-    
     https://github.com/max2058/stream.peskowcik
+    
+    
     """
     )
     
