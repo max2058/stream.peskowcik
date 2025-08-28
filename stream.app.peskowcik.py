@@ -356,10 +356,18 @@ def main() -> None:
         .episode-title { font-size: 1.15rem; font-weight: 700; margin: 0 0 .35rem 0; }
         .episode-meta { font-size: .9rem; opacity: .8; margin: -.2rem 0 .35rem 0; }
         /* Always show exactly two lines height for description, theme-agnostic */
-        .episode-desc { font-size: .95rem; line-height: 1.45; opacity: .9;
+        .desc-wrap { position: relative; }
+        .episode-desc { font-size: .95rem; line-height: 1.45; opacity: .9; margin: 0 0 .15rem 0;
             display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
             min-height: calc(1.45em * 2);
         }
+        .desc-toggle { display: none; }
+        .desc-toggle:checked ~ .episode-desc { display: block; overflow: visible; -webkit-line-clamp: initial; -webkit-box-orient: initial; }
+        .readmore { display: inline-block; font-size: .85rem; opacity: .8; text-decoration: underline; cursor: pointer; background: none; border: 0; padding: 0; float: right; }
+        .readmore:hover { opacity: 1; }
+        .readmore.less { display: none; }
+        .desc-toggle:checked ~ .readmore.more { display: none; }
+        .desc-toggle:checked ~ .readmore.less { display: inline-block; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -519,14 +527,18 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
 
-            # Vorschau: immer 2 Zeilen (CSS line‑clamp)
-            st.markdown(
-                f"<div class='episode-desc'>" + html_escape(str(row.get('Beschreibung') or "")) + "</div>",
-                unsafe_allow_html=True,
+            # Vorschau: immer 2 Zeilen (CSS line‑clamp) mit rein CSS-basiertem Toggle ohne Rerun/JS
+            desc = html_escape(str(row.get("Beschreibung") or ""))
+            toggle_id = f"toggle-{idx}"
+            html_block = (
+                f"<div class='desc-wrap'>"
+                f"<input type='checkbox' id='{toggle_id}' class='desc-toggle'>"
+                f"<div class='episode-desc'>{desc}</div>"
+                f"<label for='{toggle_id}' class='readmore more'>Mehr lesen</label>"
+                f"<label for='{toggle_id}' class='readmore less'>Weniger</label>"
+                f"</div>"
             )
-            # Volltext per clientseitigem Expander (schnell, kein Rerun)
-            with st.expander("Mehr lesen", expanded=False):
-                st.write(row.get("Beschreibung") or "")
+            st.markdown(html_block, unsafe_allow_html=True)
             # Some entries may not have a direct video url (e.g. if geoblocked). Use the
             # website as fallback when url_video is missing.
             video_url = row["Video"]
