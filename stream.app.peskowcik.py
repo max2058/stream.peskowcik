@@ -519,11 +519,14 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
 
-            # Always clamp description to 2 lines (no expand/collapse)
+            # Vorschau: immer 2 Zeilen (CSS line‑clamp)
             st.markdown(
                 f"<div class='episode-desc'>" + html_escape(str(row.get('Beschreibung') or "")) + "</div>",
                 unsafe_allow_html=True,
             )
+            # Volltext per clientseitigem Expander (schnell, kein Rerun)
+            with st.expander("Mehr lesen", expanded=False):
+                st.write(row.get("Beschreibung") or "")
             # Some entries may not have a direct video url (e.g. if geoblocked). Use the
             # website as fallback when url_video is missing.
             video_url = row["Video"]
