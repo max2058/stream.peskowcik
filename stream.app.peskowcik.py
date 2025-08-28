@@ -25,7 +25,32 @@ from pathlib import Path
 import streamlit.components.v1 as components
 
 
-DEFAULT_THUMBNAIL = Path(__file__).parent / "assets" / "images" / "sandmann_preview.png"
+def _load_default_thumbnail_bytes() -> bytes:
+    """Load thumbnail bytes from common locations or fall back to a tiny PNG.
+
+    Tries `assets/images/sandmann_preview.png` relative to this file first,
+    then the legacy location next to the script. If neither exists, returns a
+    1x1 transparent PNG so the app can still render without crashing.
+    """
+    candidates = [
+        Path(__file__).parent / "assets" / "images" / "sandmann_preview.png",
+        Path(__file__).with_name("sandmann_preview.png"),
+    ]
+    for p in candidates:
+        try:
+            if p.exists():
+                return p.read_bytes()
+        except Exception:
+            # ignore and try next
+            pass
+    # 1x1 transparent PNG (base64)
+    pixel_b64 = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+    )
+    return base64.b64decode(pixel_b64)
+
+
+DEFAULT_THUMBNAIL = _load_default_thumbnail_bytes()
 # Data URL for use as <video poster="...">
 THUMBNAIL_DATA_URL = "data:image/png;base64," + base64.b64encode(DEFAULT_THUMBNAIL).decode("ascii")
 
