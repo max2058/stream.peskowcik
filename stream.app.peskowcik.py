@@ -302,7 +302,7 @@ def build_rss(results: List[Dict[str, Any]]) -> str:
     """
     from xml.sax.saxutils import escape
 
-    channel_title = "Unser Sandmännchen – sorbische Folgen"
+    channel_title = "Pěskowčik – Stream Now!"
     channel_link = "https://www.sandmann.de"
     channel_description = "RSS‑Feed mit sorbischsprachigen Folgen aus der MediathekViewWeb‑API"
 
@@ -346,10 +346,10 @@ def main() -> None:
         "https://www.mdr.de/sandmann/sandmann824-resimage_v-variantBig24x9_w-2560.jpg?version=55897",
         use_container_width=True,
     )
-    st.title("Unser Sandmännchen – Sorbische Folgen")
+    st.title("Pěskowčik – Stream Now!")
     st.info("Diese App befindet sich noch im Aufbau und in der Entwicklung")
     st.write(
-        "Um sich nicht mit der KiKA- oder ARD-Mediathek herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App."
+        "Um sich nicht mit Mediatheken oder Google herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App."
     )
     st.write(
         "Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen. https://github.com/max2058/stream.peskowcik"
@@ -482,13 +482,13 @@ def main() -> None:
             "Beschreibung": entry.get("description"),
             "Datum": datetime.fromtimestamp(entry.get("timestamp", 0)).strftime("%d.%m.%Y"),
             # Einheitliches Vorschaubild für alle Videos
-            "Vorschau": DEFAULT_THUMBNAIL,
+            # "Vorschau": DEFAULT_THUMBNAIL,
             "Video": entry.get("url_video"),
             "Website": entry.get("url_website"),
         }
         table_rows.append(row)
 
-    st.subheader("Folgen ansehen")
+    st.subheader("Aktuelle Folgen jetzt Steamen")
     cols = st.columns(3)
     for idx, row in enumerate(table_rows):
         col = cols[idx % 3]
@@ -522,7 +522,7 @@ def main() -> None:
         column_config={
             "Beschreibung": st.column_config.TextColumn("Beschreibung", width="medium"),
             "Website": st.column_config.LinkColumn("Website", display_text="zur Seite"),
-            "Vorschau": st.column_config.ImageColumn("Vorschau", width="small"),
+            #"Vorschau": st.column_config.ImageColumn("Vorschau", width="small"),
         },
     )
 
