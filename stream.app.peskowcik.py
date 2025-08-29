@@ -177,6 +177,80 @@ def resolve_base64_from_url(source_url: str) -> Optional[str]:
     return None
 
 
+def fetch_mdr_episode(url: str) -> Optional[Dict[str, Any]]:
+    """Try to extract video and metadata from an MDR video page.
+
+    Heuristics:
+    - Prefer direct MP4 links; otherwise accept HLS (m3u8).
+    - Read OpenGraph meta for title/description if present.
+    Returns a minimal entry dict or None on failure.
+    """
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        html = resp.text
+    except Exception:
+        return None
+
+    # Extract candidate video URLs (mp4 preferred, m3u8 fallback)
+    urls = []
+    try:
+        # Common patterns in <source>, JSON, data attributes
+        urls = re.findall(r"https?://[^'\"\s>]+\.(?:mp4|m3u8)(?:\?[^'\"\s<]*)?", html, flags=re.I)
+    except Exception:
+        urls = []
+    # Deduplicate preserving order
+    seen = set()
+    cand_urls: List[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            cand_urls.append(u)
+
+    def _pick_best(candidates: List[str]) -> Optional[str]:
+        if not candidates:
+            return None
+        # Prefer mp4; otherwise first m3u8
+        for u in candidates:
+            if u.lower().endswith(".mp4"):
+                return u
+        return candidates[0]
+
+    video_url = _pick_best(cand_urls)
+
+    # Extract OpenGraph title/description if available
+    def _meta(name: str) -> Optional[str]:
+        m = re.search(rf'<meta[^>]+property=["\']og:{name}["\'][^>]+content=["\']([^"\']+)["\']', html, flags=re.I)
+        if m:
+            return m.group(1)
+        return None
+
+    title = _meta("title") or ""
+    description = _meta("description") or ""
+
+    # Optionally parse date from the page if present (dd.mm.yyyy)
+    # We look for patterns like " 22.08.2021" close to "So"/"Mo" etc.
+    ts = 0
+    m_date = re.search(r"(\b\d{2}\.\d{2}\.\d{4}\b)", html)
+    if m_date:
+        ts = _parse_de_date_to_ts(m_date.group(1))
+
+    if not (title or description or video_url):
+        return None
+
+    return {
+        "channel": "MDR",
+        "topic": "Unser Sandmännchen",
+        "title": title,
+        "description": description,
+        "timestamp": ts,
+        "duration": None,
+        "size": None,
+        "url_website": url,
+        "url_video": video_url,
+    }
+
+
 def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
     """Heuristically determine whether a MediathekViewWeb entry is sorbischsprachig.
 
@@ -429,11 +503,16 @@ def build_rss(results: List[Dict[str, Any]]) -> str:
         pub_date = convert_timestamp(int(entry.get("timestamp", 0) or 0))
         link = escape((entry.get("url_website") or ""))
         enclosure_url = escape((entry.get("url_video") or ""))
-        # Build enclosure only if a video URL is present. Use length=0 when unknown.
-        enclosure_xml = (
-            f"<enclosure url=\"{enclosure_url}\" length=\"0\" type=\"video/mp4\" />"
-            if enclosure_url else ""
-        )
+        # Build enclosure only if a video URL is present; infer MIME type.
+        if enclosure_url:
+            lower = enclosure_url.lower()
+            if lower.endswith('.m3u8'):
+                enclosure_type = 'application/x-mpegURL'
+            else:
+                enclosure_type = 'video/mp4'
+            enclosure_xml = f"<enclosure url=\"{enclosure_url}\" length=\"0\" type=\"{enclosure_type}\" />"
+        else:
+            enclosure_xml = ""
         item_xml = f"""
         <item>
             <title>{title}</title>
@@ -641,11 +720,20 @@ def main() -> None:
             base64_id = resolve_base64_from_url(src)
 
         meta = MANUAL_EPISODE_METADATA.get(src)
+        fetched = None
         if base64_id:
             try:
                 fetched = fetch_ard_episode(base64_id)
             except Exception:
                 fetched = None
+            # If ARD didn't provide a playable video, try MDR extraction
+            if fetched and not fetched.get("url_video"):
+                try:
+                    mdr_ep = fetch_mdr_episode(src)
+                except Exception:
+                    mdr_ep = None
+                if mdr_ep and mdr_ep.get("url_video"):
+                    fetched = {**fetched, "url_video": mdr_ep.get("url_video")}
             if meta:
                 # Merge fetched video (if any) with manual title/desc/date and keep MDR link
                 _add_entry_to_map(
@@ -666,19 +754,39 @@ def main() -> None:
         else:
             # Fallback: build a manual entry using provided metadata if available
             if meta:
-                _add_entry_to_map(
-                    {
-                        "channel": "MDR",
-                        "topic": "Unser Sandmännchen",
-                        "title": meta.get("title", "Pěskowčik (MDR)"),
-                        "description": meta.get("description", "Manuell hinzugefügt – externen Link öffnen."),
-                        "timestamp": _parse_de_date_to_ts(meta.get("date", "")),
-                        "duration": None,
-                        "size": None,
-                        "url_website": src,
-                        "url_video": None,
-                    }
-                )
+                # Try MDR extraction first to get a playable stream
+                try:
+                    mdr_ep = fetch_mdr_episode(src)
+                except Exception:
+                    mdr_ep = None
+                if mdr_ep and mdr_ep.get("url_video"):
+                    _add_entry_to_map(
+                        {
+                            "channel": "MDR",
+                            "topic": "Unser Sandmännchen",
+                            "title": meta.get("title", mdr_ep.get("title", "Pěskowčik (MDR)")),
+                            "description": meta.get("description", mdr_ep.get("description", "")),
+                            "timestamp": _parse_de_date_to_ts(meta.get("date", "")) or mdr_ep.get("timestamp", 0),
+                            "duration": None,
+                            "size": None,
+                            "url_website": src,
+                            "url_video": mdr_ep.get("url_video"),
+                        }
+                    )
+                else:
+                    _add_entry_to_map(
+                        {
+                            "channel": "MDR",
+                            "topic": "Unser Sandmännchen",
+                            "title": meta.get("title", "Pěskowčik (MDR)"),
+                            "description": meta.get("description", "Manuell hinzugefügt – externen Link öffnen."),
+                            "timestamp": _parse_de_date_to_ts(meta.get("date", "")),
+                            "duration": None,
+                            "size": None,
+                            "url_website": src,
+                            "url_video": None,
+                        }
+                    )
             else:
                 # Minimal fallback
                 m = re.search(r"video-(\d+)", src)
@@ -747,9 +855,13 @@ def main() -> None:
             # website as fallback when url_video is missing.
             video_url = row["Video"]
             if video_url:
+                mime = "video/mp4"
+                vu = str(video_url).lower()
+                if vu.endswith(".m3u8"):
+                    mime = "application/x-mpegURL"
                 video_html = f'''
 <video controls preload="none" playsinline style="width: 100%; height: auto;" poster="{THUMBNAIL_DATA_URL}">
-  <source src="{video_url}" type="video/mp4">
+  <source src="{video_url}" type="{mime}">
   Dein Browser unterstützt das Video-Tag nicht.
 </video>
 '''
