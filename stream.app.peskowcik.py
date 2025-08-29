@@ -637,9 +637,9 @@ def main() -> None:
 
     sorbian_entries: List[Dict[str, Any]] = []
     sorbian_map: Dict[tuple[str, str, str], Dict[str, Any]] = {}
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)  # limit to last 180 Tage
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
     max_checks = 200  # maximum number of entries to examine per page
-    max_results = 30  # maximum number of sorbian episodes to collect
+    max_results = 15  # maximum number of sorbian episodes to collect
     offset = 0
     while len(sorbian_map) < max_results:
         # If not the first iteration, fetch the next page
