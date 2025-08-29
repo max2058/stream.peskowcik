@@ -94,6 +94,7 @@ def build_query(
     return json.dumps(query)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
 def fetch_results(query_json: str) -> List[Dict[str, Any]]:
     """Call the MediathekViewWeb API and return the results list.
     
@@ -106,7 +107,7 @@ def fetch_results(query_json: str) -> List[Dict[str, Any]]:
     base_url = "https://mediathekviewweb.de/api/query"
     params = {"query": query_json}
     try:
-        resp = requests.get(base_url, params=params, timeout=10)
+        resp = requests.get(base_url, params=params, timeout=6)
         resp.raise_for_status()
     except requests.RequestException as exc:
         st.error(f"Fehler beim Abrufen der API: {exc}")
@@ -149,6 +150,7 @@ def extract_base64_id(url: str) -> Optional[str]:
     return None
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def resolve_base64_from_url(source_url: str) -> Optional[str]:
     """Try to resolve a base64 ARD publication ID from a URL.
 
@@ -166,7 +168,7 @@ def resolve_base64_from_url(source_url: str) -> Optional[str]:
             return direct
         # Fallback: fetch HTML and search for a base64 CRID token
         if source_url.startswith("http"):
-            resp = requests.get(source_url, timeout=10)
+            resp = requests.get(source_url, timeout=6)
             resp.raise_for_status()
             html = resp.text
             m = re.search(r"(Y3JpZDovL[^'\"<>\s]+)", html)
@@ -177,6 +179,7 @@ def resolve_base64_from_url(source_url: str) -> Optional[str]:
     return None
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_mdr_episode(url: str) -> Optional[Dict[str, Any]]:
     """Try to extract video and metadata from an MDR video page.
 
@@ -186,7 +189,7 @@ def fetch_mdr_episode(url: str) -> Optional[Dict[str, Any]]:
     Returns a minimal entry dict or None on failure.
     """
     try:
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=6)
         resp.raise_for_status()
         html = resp.text
     except Exception:
@@ -234,7 +237,7 @@ def fetch_mdr_episode(url: str) -> Optional[Dict[str, Any]]:
                 embed_url = f"https://www.mdr.de/mediathek/embed/video-{m.group(1)}.html"
         if embed_url:
             try:
-                eresp = requests.get(embed_url, timeout=10)
+                eresp = requests.get(embed_url, timeout=6)
                 eresp.raise_for_status()
                 ehtml = eresp.text
                 eurls = re.findall(r"https?://[^'\"\s>]+\.(?:mp4|m3u8)(?:\?[^'\"\s<]*)?", ehtml, flags=re.I)
@@ -427,6 +430,7 @@ def _parse_de_date_to_ts(date_str: str) -> int:
         return 0
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_ard_episode(base64_id: str) -> Optional[Dict[str, Any]]:
     """Fetch episode details directly from the ARD page‑gateway API.
 
@@ -443,7 +447,7 @@ def fetch_ard_episode(base64_id: str) -> Optional[Dict[str, Any]]:
     """
     api_url = f"https://api.ardmediathek.de/page-gateway/pages/ard/item/{base64_id}"
     try:
-        resp = requests.get(api_url, timeout=10)
+        resp = requests.get(api_url, timeout=6)
         resp.raise_for_status()
         data = resp.json()
     except Exception:
@@ -627,8 +631,9 @@ def main() -> None:
     # API Query and Fetch
     with st.spinner("Lade Daten von der Mediathek…"):
         # veröffentlichte sorbische Episoden ohne "sorbisch" im Titel
-        # nicht untergehen. 
-        query_json = build_query(topic="Unser Sandmännchen", title_filter=None, size=200, offset=0)
+        # nicht untergehen.  Reduzierte Page‑Size für schnelleren Start.
+        page_size = 120
+        query_json = build_query(topic="Unser Sandmännchen", title_filter=None, size=page_size, offset=0)
         results = fetch_results(query_json)
 
     if not results:
@@ -638,13 +643,13 @@ def main() -> None:
     sorbian_entries: List[Dict[str, Any]] = []
     sorbian_map: Dict[tuple[str, str, str], Dict[str, Any]] = {}
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
-    max_checks = 200  # maximum number of entries to examine per page
+    max_checks = 120  # maximum number of entries to examine per page (≈ page_size)
     max_results = 15  # maximum number of sorbian episodes to collect
     offset = 0
     while len(sorbian_map) < max_results:
         # If not the first iteration, fetch the next page
         if offset > 0:
-            query_json_page = build_query(topic="Unser Sandmännchen", title_filter=None, size=200, offset=offset)
+            query_json_page = build_query(topic="Unser Sandmännchen", title_filter=None, size=page_size, offset=offset)
             page_results = fetch_results(query_json_page)
             if not page_results:
                 break
@@ -691,7 +696,7 @@ def main() -> None:
         # request further pages.
         if checked < max_checks:
             break
-        offset += 200
+        offset += page_size
 
     # Optionally include manually specified episodes that might not yet
     # appear in the MediathekView database.  These are considered in
@@ -718,19 +723,30 @@ def main() -> None:
 
     # From external URLs (ARD or MDR); try to resolve to ARD base64 first
     for src in MANUAL_EPISODE_URLS:
-        base64_id = None
-        if src.startswith("http"):
-            base64_id = resolve_base64_from_url(src)
-
         meta = MANUAL_EPISODE_METADATA.get(src)
         fetched = None
+        # Prefer direct MDR parsing first to avoid double network fetches
+        is_mdr = "mdr.de" in src
+        base64_id = None
+        if is_mdr:
+            try:
+                fetched = fetch_mdr_episode(src)
+            except Exception:
+                fetched = None
+            # If MDR didn’t yield a playable URL, try to resolve an ARD ID
+            if not (fetched and fetched.get("url_video")):
+                base64_id = resolve_base64_from_url(src)
+        else:
+            # ARD link: try to extract base64 ID quickly (no network if present)
+            base64_id = resolve_base64_from_url(src) if src.startswith("http") else None
+
         if base64_id:
             try:
                 fetched = fetch_ard_episode(base64_id)
             except Exception:
                 fetched = None
             # If ARD didn't provide a playable video, try MDR extraction
-            if fetched and not fetched.get("url_video"):
+            if fetched and not fetched.get("url_video") and is_mdr:
                 try:
                     mdr_ep = fetch_mdr_episode(src)
                 except Exception:
