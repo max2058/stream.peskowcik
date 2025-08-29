@@ -218,6 +218,35 @@ def fetch_mdr_episode(url: str) -> Optional[Dict[str, Any]]:
 
     video_url = _pick_best(cand_urls)
 
+    # Second attempt: look for an explicit embed URL and parse it
+    if not video_url:
+        # Try <meta property="og:video" ...>, twitter:player or obvious embed paths
+        embed_url = None
+        for prop in ["video", "video:url"]:
+            m = re.search(rf'<meta[^>]+property=["\']og:{prop}["\'][^>]+content=["\']([^"\']+)["\']', html, flags=re.I)
+            if m:
+                embed_url = m.group(1)
+                break
+        if not embed_url:
+            # Derive from numeric id in URL
+            m = re.search(r"video-(\d+)\.html", url)
+            if m:
+                embed_url = f"https://www.mdr.de/mediathek/embed/video-{m.group(1)}.html"
+        if embed_url:
+            try:
+                eresp = requests.get(embed_url, timeout=10)
+                eresp.raise_for_status()
+                ehtml = eresp.text
+                eurls = re.findall(r"https?://[^'\"\s>]+\.(?:mp4|m3u8)(?:\?[^'\"\s<]*)?", ehtml, flags=re.I)
+                video_url = _pick_best(eurls)
+                # If still nothing, scan for JSON with src fields
+                if not video_url:
+                    m2 = re.search(r"src\s*:\s*['\"](https?://[^'\"]+\.(?:mp4|m3u8)[^'\"]*)['\"]", ehtml)
+                    if m2:
+                        video_url = m2.group(1)
+            except Exception:
+                pass
+
     # Extract OpenGraph title/description if available
     def _meta(name: str) -> Optional[str]:
         m = re.search(rf'<meta[^>]+property=["\']og:{name}["\'][^>]+content=["\']([^"\']+)["\']', html, flags=re.I)
@@ -597,12 +626,8 @@ def main() -> None:
     
     # API Query and Fetch
     with st.spinner("Lade Daten von der Mediathek…"):
-        # We fetch a larger window of results so that recently
         # veröffentlichte sorbische Episoden ohne "sorbisch" im Titel
-        # nicht untergehen.  Adjust size if necessary.
-        # Fetch the first page of results for "Unser Sandmännchen".  We start
-        # with 200 items which correspond to roughly 100 Sendetage (ca. zwei
-        # Folgen pro Tag).  We fetch the second page only if needed later.
+        # nicht untergehen. 
         query_json = build_query(topic="Unser Sandmännchen", title_filter=None, size=200, offset=0)
         results = fetch_results(query_json)
 
@@ -610,29 +635,7 @@ def main() -> None:
         st.warning("Es wurden keine passenden Einträge gefunden.")
         return
 
-    #
-    # Filter for sorbian episodes.  To avoid long load times, we examine
-    # only a subset of the most recent entries and fetch subsequent
-    # pages only if necessary.  Checking each entry may trigger an
-    # additional network request to the ARD API (if used in heuristics),
-    # so we limit the number of checks and deduplicate results on the fly.
-    #
     sorbian_entries: List[Dict[str, Any]] = []
-    # Use a set of strings to track unique episodes.  Wherever possible
-    # we deduplicate based on a stable base64 identifier extracted from
-    # the episode URLs.  If no identifier can be found, we fall back
-    # to the normalized title.  We avoid using the timestamp as part
-    # of the deduplication key because some duplicates have different
-    # publication timestamps for the same content.
-    # Use a set of tuples for deduplication.  Each key consists of
-    # (normalized title, normalized description, date string).  This
-    # approach tolerates variations in publication timestamps or URLs but
-    # collapses entries that are effectively identical in content and
-    # broadcast date (e.g. "Fuchs und Elster: Gestörte Angelfreuden" in ARD
-    # and KiKA).  The normalized description ensures that similar titles
-    # with different episode descriptions are treated separately.
-    # Mapping of deduplication keys to the best episode entry.  Each key
-    # consists of (normalized title, normalized description, date string).
     sorbian_map: Dict[tuple[str, str, str], Dict[str, Any]] = {}
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)  # limit to last 180 Tage
     max_checks = 200  # maximum number of entries to examine per page
@@ -855,17 +858,45 @@ def main() -> None:
             # website as fallback when url_video is missing.
             video_url = row["Video"]
             if video_url:
-                mime = "video/mp4"
-                vu = str(video_url).lower()
-                if vu.endswith(".m3u8"):
-                    mime = "application/x-mpegURL"
-                video_html = f'''
+                vu = str(video_url)
+                if vu.lower().endswith(".m3u8"):
+                    # Use hls.js for cross‑browser HLS playback
+                    player_id = f"vid-{idx}"
+                    video_html = f'''
+<div>
+  <video id="{player_id}" controls preload="none" playsinline style="width: 100%; height: auto;" poster="{THUMBNAIL_DATA_URL}"></video>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script>
+    (function() {{
+      var url = {json.dumps(vu)};
+      var video = document.getElementById({json.dumps(player_id)});
+      if (video.canPlayType('application/vnd.apple.mpegURL')) {{
+        video.src = url;
+      }} else if (window.Hls && window.Hls.isSupported()) {{
+        var hls = new Hls();
+        hls.loadSource(url);
+        hls.attachMedia(video);
+      }} else {{
+        // Fallback link if HLS unsupported
+        var a = document.createElement('a');
+        a.href = url;
+        a.innerText = 'Video öffnen';
+        a.target = '_blank';
+        video.parentNode.appendChild(a);
+      }}
+    }})();
+  </script>
+</div>
+'''
+                    components.html(video_html, height=320)
+                else:
+                    video_html = f'''
 <video controls preload="none" playsinline style="width: 100%; height: auto;" poster="{THUMBNAIL_DATA_URL}">
-  <source src="{video_url}" type="{mime}">
+  <source src="{vu}" type="video/mp4">
   Dein Browser unterstützt das Video-Tag nicht.
 </video>
 '''
-                components.html(video_html, height=300)
+                    components.html(video_html, height=300)
             else:
                 # Fallback: verlinktes Vorschaubild zur Website
                 website = row["Website"]
