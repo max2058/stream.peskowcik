@@ -277,6 +277,52 @@ MANUAL_EPISODE_URLS: List[str] = [
     "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-liska-a-sroka-jablucina-oder-unser-sandmaennchen-sorbisch-oder-17-08-2025/rbb/Y3JpZDovL3JiYl9iNmY2MWU1ZC02NDdkLTQ2ZjQtYjYzNC0wY2JkOTM5NzYwOTdfcHVibGljYXRpb24",
 ]
 
+# Rich metadata for specific MDR links provided by the user.
+# Dates are given as "dd.mm.yyyy" and will be parsed to a UTC timestamp.
+MANUAL_EPISODE_METADATA: Dict[str, Dict[str, str]] = {
+    "https://www.mdr.de/sandmann/video-536936.html": {
+        "title": "Pěskowčik: Kalli chce być myška",
+        "description": (
+            "Kalli njemóže sej zaso raz wusnyć! Tónraz stanie so z myšku, "
+            "dokelž tak rady twarožk rymza."
+        ),
+        "date": "22.08.2021",
+    },
+    "https://www.mdr.de/sandmann/video-529286.html": {
+        "title": "Pěskowčik: Pirat Kalli so hněwa",
+        "description": (
+            "Kalli chce pirat być, tola Mareike je jemu tutu ideju skazyła. "
+            "Naraz stanie so wón samo z kapitanom wulkeje łódźe a hižo wubědźowanje startuje."
+        ),
+        "date": "25.07.2021",
+    },
+    "https://www.mdr.de/sandmann/video-529344.html": {
+        "title": "Pěskowčik: Kalli a wobraz za Mareiku",
+        "description": (
+            "Kalli njemóže sej zaso raz wusnyć. Tónraz je módry krokodil namolował "
+            "a chce so ze seršćowcom stać. Kalli chce mjenujcy swět pisaniši sčinić."
+        ),
+        "date": "11.07.2021",
+    },
+}
+
+def _parse_de_date_to_ts(date_str: str) -> int:
+    """Parse a date in format dd.mm.yyyy to a UTC timestamp (12:00).
+
+    Returns 0 on failure.
+    """
+    try:
+        # remove weekday prefixes like "So " if present and trailing punctuation
+        cleaned = date_str.strip()
+        cleaned = re.sub(r"^[A-Za-zÀ-ÿ]{2,3}\s+", "", cleaned)  # drop short weekday like So, Mo
+        cleaned = cleaned.rstrip(".")
+        dt = datetime.strptime(cleaned, "%d.%m.%Y").replace(tzinfo=timezone.utc)
+        # set to noon to avoid timezone edge cases
+        dt = dt.replace(hour=12, minute=0, second=0, microsecond=0)
+        return int(dt.timestamp())
+    except Exception:
+        return 0
+
 
 def fetch_ard_episode(base64_id: str) -> Optional[Dict[str, Any]]:
     """Fetch episode details directly from the ARD page‑gateway API.
@@ -588,30 +634,63 @@ def main() -> None:
         base64_id = None
         if src.startswith("http"):
             base64_id = resolve_base64_from_url(src)
+
+        meta = MANUAL_EPISODE_METADATA.get(src)
         if base64_id:
             try:
-                ep = fetch_ard_episode(base64_id)
+                fetched = fetch_ard_episode(base64_id)
             except Exception:
-                ep = None
-            _add_entry_to_map(ep)
+                fetched = None
+            if meta:
+                # Merge fetched video (if any) with manual title/desc/date and keep MDR link
+                _add_entry_to_map(
+                    {
+                        "channel": (fetched or {}).get("channel", "MDR"),
+                        "topic": "Unser Sandmännchen",
+                        "title": meta.get("title", (fetched or {}).get("title")),
+                        "description": meta.get("description", (fetched or {}).get("description")),
+                        "timestamp": _parse_de_date_to_ts(meta.get("date", "")) or (fetched or {}).get("timestamp", 0),
+                        "duration": (fetched or {}).get("duration"),
+                        "size": None,
+                        "url_website": src,
+                        "url_video": (fetched or {}).get("url_video"),
+                    }
+                )
+            else:
+                _add_entry_to_map(fetched)
         else:
-            # Fallback: include as a minimal entry with website link only
-            # Try to derive a short id from the URL to keep entries distinct
-            m = re.search(r"video-(\d+)", src)
-            short = m.group(1) if m else src.rsplit("/", 1)[-1]
-            _add_entry_to_map(
-                {
-                    "channel": "MDR",
-                    "topic": "Unser Sandmännchen",
-                    "title": f"Pěskowčik (MDR) – {short}",
-                    "description": "Manuell hinzugefügt – externen Link öffnen.",
-                    "timestamp": 0,
-                    "duration": None,
-                    "size": None,
-                    "url_website": src,
-                    "url_video": None,
-                }
-            )
+            # Fallback: build a manual entry using provided metadata if available
+            if meta:
+                _add_entry_to_map(
+                    {
+                        "channel": "MDR",
+                        "topic": "Unser Sandmännchen",
+                        "title": meta.get("title", "Pěskowčik (MDR)"),
+                        "description": meta.get("description", "Manuell hinzugefügt – externen Link öffnen."),
+                        "timestamp": _parse_de_date_to_ts(meta.get("date", "")),
+                        "duration": None,
+                        "size": None,
+                        "url_website": src,
+                        "url_video": None,
+                    }
+                )
+            else:
+                # Minimal fallback
+                m = re.search(r"video-(\d+)", src)
+                short = m.group(1) if m else src.rsplit("/", 1)[-1]
+                _add_entry_to_map(
+                    {
+                        "channel": "MDR",
+                        "topic": "Unser Sandmännchen",
+                        "title": f"Pěskowčik (MDR) – {short}",
+                        "description": "Manuell hinzugefügt – externen Link öffnen.",
+                        "timestamp": 0,
+                        "duration": None,
+                        "size": None,
+                        "url_website": src,
+                        "url_video": None,
+                    }
+                )
 
     # Convert the sorbian_map to a list for further processing
     sorbian_entries = list(sorbian_map.values())
