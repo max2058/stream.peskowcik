@@ -149,6 +149,34 @@ def extract_base64_id(url: str) -> Optional[str]:
     return None
 
 
+def resolve_base64_from_url(source_url: str) -> Optional[str]:
+    """Try to resolve a base64 ARD publication ID from a URL.
+
+    - If the URL already points to ARD Mediathek with a trailing base64 segment,
+      reuse :func:`extract_base64_id`.
+    - If the URL is an MDR page, download the HTML and scan for an embedded
+      ARD base64 ID (pattern starting with ``Y3Jp``).
+
+    Returns the base64 ID if found, otherwise ``None``.
+    """
+    try:
+        # Fast path: extract directly if present in the URL
+        direct = extract_base64_id(source_url)
+        if direct:
+            return direct
+        # Fallback: fetch HTML and search for a base64 CRID token
+        if source_url.startswith("http"):
+            resp = requests.get(source_url, timeout=10)
+            resp.raise_for_status()
+            html = resp.text
+            m = re.search(r"(Y3JpZDovL[^'\"<>\s]+)", html)
+            if m:
+                return m.group(1)
+    except Exception:
+        return None
+    return None
+
+
 def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
     """Heuristically determine whether a MediathekViewWeb entry is sorbischsprachig.
 
@@ -182,6 +210,10 @@ def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
         "spewaca",
         "mróčele",
         "mrocele",
+        "jablucina",
+        "jabłucina",
+        "liska",
+        "sroka",
     ]
     for kw in keywords:
         if kw in title or kw in description:
@@ -231,6 +263,18 @@ MANUAL_EPISODES: List[str] = [
 
     # Fuchs und Elster: Gestörte Angelfreuden (sorbisch) | 24.08.2025
     "Y3JpZDovL3JiYl80MDE1ZGU4MS01ZjQwLTRhOWItYjdlNi1kZTQ3ZGU2M2Y5MTVfcHVibGljYXRpb24",
+]
+
+# Optional additional sources (URLs) that might not show up in MediathekView yet.
+# These can be ARD Mediathek links (containing a base64 ID) or MDR video pages.
+# We attempt to resolve MDR pages to ARD base64 IDs at runtime.
+MANUAL_EPISODE_URLS: List[str] = [
+    # Provided by user: MDR pages
+    "https://www.mdr.de/sandmann/video-536936.html",
+    "https://www.mdr.de/sandmann/video-529286.html",
+    "https://www.mdr.de/sandmann/video-529344.html",
+    # Provided by user: ARD Mediathek direct link (already contains base64 ID)
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-liska-a-sroka-jablucina-oder-unser-sandmaennchen-sorbisch-oder-17-08-2025/rbb/Y3JpZDovL3JiYl9iNmY2MWU1ZC02NDdkLTQ2ZjQtYjYzNC0wY2JkOTM5NzYwOTdfcHVibGljYXRpb24",
 ]
 
 
@@ -460,9 +504,9 @@ def main() -> None:
     # Mapping of deduplication keys to the best episode entry.  Each key
     # consists of (normalized title, normalized description, date string).
     sorbian_map: Dict[tuple[str, str, str], Dict[str, Any]] = {}
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)  # limit to last 180 Tage
     max_checks = 200  # maximum number of entries to examine per page
-    max_results = 15  # maximum number of sorbian episodes to collect
+    max_results = 30  # maximum number of sorbian episodes to collect
     offset = 0
     while len(sorbian_map) < max_results:
         # If not the first iteration, fetch the next page
@@ -507,7 +551,7 @@ def main() -> None:
                         break
             checked += 1
         # Determine whether to fetch another page
-        if cutoff_reached or len(sorbian_entries) >= max_results:
+        if cutoff_reached or len(sorbian_map) >= max_results:
             break
         # If we examined fewer entries than max_checks it means the page
         # contained fewer than max_checks items, so there is no need to
@@ -519,20 +563,55 @@ def main() -> None:
     # Optionally include manually specified episodes that might not yet
     # appear in the MediathekView database.  These are considered in
     # the same deduplication logic as the API entries.
+    def _add_entry_to_map(ep: Optional[Dict[str, Any]]):
+        if not ep:
+            return
+        title_norm = (ep.get("title") or "").strip().lower()
+        desc_norm = (ep.get("description") or "").strip().lower()
+        ts_int = int(ep.get("timestamp", 0))
+        date_str = datetime.fromtimestamp(ts_int, tz=timezone.utc).strftime("%Y-%m-%d") if ts_int else ""
+        key = (title_norm, desc_norm, date_str)
+        existing = sorbian_map.get(key)
+        if existing is None or sorbian_score(ep) > sorbian_score(existing):
+            sorbian_map[key] = ep
+
+    # From known base64 IDs
     for base64_id in MANUAL_EPISODES:
         try:
             ep = fetch_ard_episode(base64_id)
         except Exception:
             ep = None
-        if ep:
-            title_norm = (ep.get("title") or "").strip().lower()
-            desc_norm = (ep.get("description") or "").strip().lower()
-            ts_int = int(ep.get("timestamp", 0))
-            date_str = datetime.fromtimestamp(ts_int, tz=timezone.utc).strftime("%Y-%m-%d") if ts_int else ""
-            key = (title_norm, desc_norm, date_str)
-            existing = sorbian_map.get(key)
-            if existing is None or sorbian_score(ep) > sorbian_score(existing):
-                sorbian_map[key] = ep
+        _add_entry_to_map(ep)
+
+    # From external URLs (ARD or MDR); try to resolve to ARD base64 first
+    for src in MANUAL_EPISODE_URLS:
+        base64_id = None
+        if src.startswith("http"):
+            base64_id = resolve_base64_from_url(src)
+        if base64_id:
+            try:
+                ep = fetch_ard_episode(base64_id)
+            except Exception:
+                ep = None
+            _add_entry_to_map(ep)
+        else:
+            # Fallback: include as a minimal entry with website link only
+            # Try to derive a short id from the URL to keep entries distinct
+            m = re.search(r"video-(\d+)", src)
+            short = m.group(1) if m else src.rsplit("/", 1)[-1]
+            _add_entry_to_map(
+                {
+                    "channel": "MDR",
+                    "topic": "Unser Sandmännchen",
+                    "title": f"Pěskowčik (MDR) – {short}",
+                    "description": "Manuell hinzugefügt – externen Link öffnen.",
+                    "timestamp": 0,
+                    "duration": None,
+                    "size": None,
+                    "url_website": src,
+                    "url_video": None,
+                }
+            )
 
     # Convert the sorbian_map to a list for further processing
     sorbian_entries = list(sorbian_map.values())
