@@ -399,8 +399,8 @@ def main() -> None:
     st.info("Diese App befindet sich noch im Aufbau und in der Entwicklung")
     st.markdown(
         """
-        Um sich nicht mit Mediatheken oder Google herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App.
-
+        Um sich nicht mit den Mediatheken oder Google herumärgern zu müssen und um die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, habe ich diese App entwickelt.
+        
         Bei der Entwicklung musste ich leider feststellen:
         """
     )
