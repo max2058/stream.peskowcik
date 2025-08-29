@@ -423,12 +423,13 @@ def build_rss(results: List[Dict[str, Any]]) -> str:
 
     items_xml = []
     for entry in results:
-        title = escape(entry.get("title", ""))
-        description = escape(entry.get("description", ""))
-        pub_date = convert_timestamp(entry.get("timestamp", 0))
-        link = escape(entry.get("url_website", ""))
-        enclosure_url = escape(entry.get("url_video", ""))
-        duration = entry.get("duration")
+        # Ensure we always pass strings to escape(); handle None values robustly.
+        title = escape((entry.get("title") or ""))
+        description = escape((entry.get("description") or ""))
+        pub_date = convert_timestamp(int(entry.get("timestamp", 0) or 0))
+        link = escape((entry.get("url_website") or ""))
+        enclosure_url = escape((entry.get("url_video") or ""))
+        duration = str(entry.get("duration") or 0)
         item_xml = f"""
         <item>
             <title>{title}</title>
