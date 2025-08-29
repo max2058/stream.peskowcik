@@ -398,19 +398,27 @@ def main() -> None:
     )
     st.info("Diese App befindet sich noch im Aufbau und in der Entwicklung")
     st.markdown(
-    """
-    Um sich nicht mit Mediatheken oder Google herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App.
+        """
+        Um sich nicht mit Mediatheken oder Google herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App.
 
-    Bei der Entwicklung musste ich leider feststellen:
-    1. Nicht immer bekommt eine sorbische Episode auch einen sorbischsprachigen Titel und Beschreibung – manchmal ist alles nur auf Deutsch.
-    2. Es kam schon vor, dass im Titel **Plumps** steht, dich aber in der Episode **Fuchs und Elster** begrüßen.
-    Das liegt nicht an der API oder dieser App, sondern direkt an der ARD-Mediathek!
-       
-    Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen. 
-    https://github.com/max2058/stream.peskowcik
-    
-    
-    """
+        Bei der Entwicklung musste ich leider feststellen:
+        """
+    )
+
+    with st.expander("Mehr lesen"):
+        st.markdown(
+            """
+            1. Nicht immer bekommt eine sorbische Episode auch einen sorbischsprachigen Titel und Beschreibung – manchmal ist alles nur auf Deutsch.
+            2. Es kam schon vor, dass im Titel **Plumps** steht, dich aber in der Episode **Fuchs und Elster** begrüßen.
+            Das liegt nicht an der API oder dieser App, sondern direkt an der ARD-Mediathek!
+            """
+        )
+
+    st.markdown(
+        """
+        Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen. 
+        https://github.com/max2058/stream.peskowcik
+        """
     )
     
     # API Query and Fetch
