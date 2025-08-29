@@ -429,7 +429,11 @@ def build_rss(results: List[Dict[str, Any]]) -> str:
         pub_date = convert_timestamp(int(entry.get("timestamp", 0) or 0))
         link = escape((entry.get("url_website") or ""))
         enclosure_url = escape((entry.get("url_video") or ""))
-        duration = str(entry.get("duration") or 0)
+        # Build enclosure only if a video URL is present. Use length=0 when unknown.
+        enclosure_xml = (
+            f"<enclosure url=\"{enclosure_url}\" length=\"0\" type=\"video/mp4\" />"
+            if enclosure_url else ""
+        )
         item_xml = f"""
         <item>
             <title>{title}</title>
@@ -437,7 +441,7 @@ def build_rss(results: List[Dict[str, Any]]) -> str:
             <link>{link}</link>
             <guid>{link}</guid>
             <pubDate>{pub_date}</pubDate>
-            <enclosure url="{enclosure_url}" length="{duration}" type="video/mp4" />
+            {enclosure_xml}
         </item>
         """
         items_xml.append(item_xml.strip())
