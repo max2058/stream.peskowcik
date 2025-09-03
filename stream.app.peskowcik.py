@@ -366,7 +366,6 @@ MANUAL_EPISODES: List[str] = [
     "Y3JpZDovL3JiYl8wMjk5OTNlZS1kOTI4LTRmNjUtYTMzNy00Y2U0MzA4ZDBjMjRfcHVibGljYXRpb24",
     # Pěskowčik: Liška a sroka: Špewaca lisca wopus | 06.07.2025
     "Y3JpZDovL3JiYl8xNDYwZDFhZS1hYTBkLTQ5YjctYTRlYy1kZDZiOWVmNjI1OWRfcHVibGljYXRpb24",
-
     # Pěskowčik: Plumps: Powetrowy balon | 13.07.2025
     "Y3JpZDovL3JiYl80MzU4NjU4Ny1jZDk3LTQ4MTEtYWFkNS05YWMzYmJjZWY3OGVfcHVibGljYXRpb24",
     # Pěskowčik: Plumps: Jako chcyše ćipka wulka być | 27.07.2025
@@ -387,8 +386,9 @@ MANUAL_EPISODE_URLS: List[str] = [
     "https://www.mdr.de/sandmann/video-536936.html",
     "https://www.mdr.de/sandmann/video-529286.html",
     "https://www.mdr.de/sandmann/video-529344.html",
-    # Provided by user: ARD Mediathek direct link (already contains base64 ID)
+    # Provided by user: ARD Mediathek direct links (already contain base64 ID)
     "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-liska-a-sroka-jablucina-oder-unser-sandmaennchen-sorbisch-oder-17-08-2025/rbb/Y3JpZDovL3JiYl9iNmY2MWU1ZC02NDdkLTQ2ZjQtYjYzNC0wY2JkOTM5NzYwOTdfcHVibGljYXRpb24",
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-liska-a-sroka-prekwapjenka-za-knjeni-sroku-oder-unser-sandmaennchen-sorbisch-oder-03-08-2025/rbb/Y3JpZDovL3JiYl82NjM2ZDcxZS0zYzZjLTRjYTUtOGI1ZS0yNjc0OTQxMjQ0ZWZfcHVibGljYXRpb24",
 ]
 
 # Rich metadata for specific MDR links provided by the user.
