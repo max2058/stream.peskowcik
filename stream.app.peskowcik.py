@@ -94,6 +94,7 @@ def build_query(
     return json.dumps(query)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
 def fetch_results(query_json: str) -> List[Dict[str, Any]]:
     """Call the MediathekViewWeb API and return the results list.
     
@@ -106,7 +107,7 @@ def fetch_results(query_json: str) -> List[Dict[str, Any]]:
     base_url = "https://mediathekviewweb.de/api/query"
     params = {"query": query_json}
     try:
-        resp = requests.get(base_url, params=params, timeout=10)
+        resp = requests.get(base_url, params=params, timeout=6)
         resp.raise_for_status()
     except requests.RequestException as exc:
         st.error(f"Fehler beim Abrufen der API: {exc}")
@@ -149,6 +150,139 @@ def extract_base64_id(url: str) -> Optional[str]:
     return None
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def resolve_base64_from_url(source_url: str) -> Optional[str]:
+    """Try to resolve a base64 ARD publication ID from a URL.
+
+    - If the URL already points to ARD Mediathek with a trailing base64 segment,
+      reuse :func:`extract_base64_id`.
+    - If the URL is an MDR page, download the HTML and scan for an embedded
+      ARD base64 ID (pattern starting with ``Y3Jp``).
+
+    Returns the base64 ID if found, otherwise ``None``.
+    """
+    try:
+        # Fast path: extract directly if present in the URL
+        direct = extract_base64_id(source_url)
+        if direct:
+            return direct
+        # Fallback: fetch HTML and search for a base64 CRID token
+        if source_url.startswith("http"):
+            resp = requests.get(source_url, timeout=6)
+            resp.raise_for_status()
+            html = resp.text
+            m = re.search(r"(Y3JpZDovL[^'\"<>\s]+)", html)
+            if m:
+                return m.group(1)
+    except Exception:
+        return None
+    return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_mdr_episode(url: str) -> Optional[Dict[str, Any]]:
+    """Try to extract video and metadata from an MDR video page.
+
+    Heuristics:
+    - Prefer direct MP4 links; otherwise accept HLS (m3u8).
+    - Read OpenGraph meta for title/description if present.
+    Returns a minimal entry dict or None on failure.
+    """
+    try:
+        resp = requests.get(url, timeout=6)
+        resp.raise_for_status()
+        html = resp.text
+    except Exception:
+        return None
+
+    # Extract candidate video URLs (mp4 preferred, m3u8 fallback)
+    urls = []
+    try:
+        # Common patterns in <source>, JSON, data attributes
+        urls = re.findall(r"https?://[^'\"\s>]+\.(?:mp4|m3u8)(?:\?[^'\"\s<]*)?", html, flags=re.I)
+    except Exception:
+        urls = []
+    # Deduplicate preserving order
+    seen = set()
+    cand_urls: List[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            cand_urls.append(u)
+
+    def _pick_best(candidates: List[str]) -> Optional[str]:
+        if not candidates:
+            return None
+        # Prefer mp4; otherwise first m3u8
+        for u in candidates:
+            if u.lower().endswith(".mp4"):
+                return u
+        return candidates[0]
+
+    video_url = _pick_best(cand_urls)
+
+    # Second attempt: look for an explicit embed URL and parse it
+    if not video_url:
+        # Try <meta property="og:video" ...>, twitter:player or obvious embed paths
+        embed_url = None
+        for prop in ["video", "video:url"]:
+            m = re.search(rf'<meta[^>]+property=["\']og:{prop}["\'][^>]+content=["\']([^"\']+)["\']', html, flags=re.I)
+            if m:
+                embed_url = m.group(1)
+                break
+        if not embed_url:
+            # Derive from numeric id in URL
+            m = re.search(r"video-(\d+)\.html", url)
+            if m:
+                embed_url = f"https://www.mdr.de/mediathek/embed/video-{m.group(1)}.html"
+        if embed_url:
+            try:
+                eresp = requests.get(embed_url, timeout=6)
+                eresp.raise_for_status()
+                ehtml = eresp.text
+                eurls = re.findall(r"https?://[^'\"\s>]+\.(?:mp4|m3u8)(?:\?[^'\"\s<]*)?", ehtml, flags=re.I)
+                video_url = _pick_best(eurls)
+                # If still nothing, scan for JSON with src fields
+                if not video_url:
+                    m2 = re.search(r"src\s*:\s*['\"](https?://[^'\"]+\.(?:mp4|m3u8)[^'\"]*)['\"]", ehtml)
+                    if m2:
+                        video_url = m2.group(1)
+            except Exception:
+                pass
+
+    # Extract OpenGraph title/description if available
+    def _meta(name: str) -> Optional[str]:
+        m = re.search(rf'<meta[^>]+property=["\']og:{name}["\'][^>]+content=["\']([^"\']+)["\']', html, flags=re.I)
+        if m:
+            return m.group(1)
+        return None
+
+    title = _meta("title") or ""
+    description = _meta("description") or ""
+
+    # Optionally parse date from the page if present (dd.mm.yyyy)
+    # We look for patterns like " 22.08.2021" close to "So"/"Mo" etc.
+    ts = 0
+    m_date = re.search(r"(\b\d{2}\.\d{2}\.\d{4}\b)", html)
+    if m_date:
+        ts = _parse_de_date_to_ts(m_date.group(1))
+
+    if not (title or description or video_url):
+        return None
+
+    return {
+        "channel": "MDR",
+        "topic": "Unser Sandmännchen",
+        "title": title,
+        "description": description,
+        "timestamp": ts,
+        "duration": None,
+        "size": None,
+        "url_website": url,
+        "url_video": video_url,
+    }
+
+
 def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
     """Heuristically determine whether a MediathekViewWeb entry is sorbischsprachig.
 
@@ -182,6 +316,10 @@ def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
         "spewaca",
         "mróčele",
         "mrocele",
+        "jablucina",
+        "jabłucina",
+        "liska",
+        "sroka",
     ]
     for kw in keywords:
         if kw in title or kw in description:
@@ -229,11 +367,78 @@ MANUAL_EPISODES: List[str] = [
     # Pěskowčik: Liška a sroka: Špewaca lisca wopus | 06.07.2025
     "Y3JpZDovL3JiYl8xNDYwZDFhZS1hYTBkLTQ5YjctYTRlYy1kZDZiOWVmNjI1OWRfcHVibGljYXRpb24",
 
+    # Pěskowčik: Plumps: Powetrowy balon | 13.07.2025
+    "Y3JpZDovL3JiYl80MzU4NjU4Ny1jZDk3LTQ4MTEtYWFkNS05YWMzYmJjZWY3OGVfcHVibGljYXRpb24",
+    # Pěskowčik: Plumps: Jako chcyše ćipka wulka być | 27.07.2025
+    "Y3JpZDovL3JiYl9kNGU3YTc0Mi1jYzEzLTRjNTYtYjVkYS01OWQ5MmFkZjJjZDlfcHVibGljYXRpb24",
+    # Pěskowčik: Plumps: Der Glückskäfer | 10.08.2025
+    "Y3JpZDovL3JiYl84OWJjODc4Mi01MWYwLTQ2NzgtYmM5MC1mYzIxMzNkOTIyOWFfcHVibGljYXRpb24",
     # Fuchs und Elster: Gestörte Angelfreuden (sorbisch) | 24.08.2025
     "Y3JpZDovL3JiYl80MDE1ZGU4MS01ZjQwLTRhOWItYjdlNi1kZTQ3ZGU2M2Y5MTVfcHVibGljYXRpb24",
+    # Pěskowčik: Pitiplac mopi a knyskotaty law | 31.08.2025
+    "Y3JpZDovL3JiYl81NTY3M2M5Zi01YjAyLTQ5OTQtOTI1Ny1lMjk5MjdlMjNhNjZfcHVibGljYXRpb24",
 ]
 
+# Optional additional sources (URLs) that might not show up in MediathekView yet.
+# These can be ARD Mediathek links (containing a base64 ID) or MDR video pages.
+# We attempt to resolve MDR pages to ARD base64 IDs at runtime.
+MANUAL_EPISODE_URLS: List[str] = [
+    # Provided by user: MDR pages
+    "https://www.mdr.de/sandmann/video-536936.html",
+    "https://www.mdr.de/sandmann/video-529286.html",
+    "https://www.mdr.de/sandmann/video-529344.html",
+    # Provided by user: ARD Mediathek direct link (already contains base64 ID)
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-liska-a-sroka-jablucina-oder-unser-sandmaennchen-sorbisch-oder-17-08-2025/rbb/Y3JpZDovL3JiYl9iNmY2MWU1ZC02NDdkLTQ2ZjQtYjYzNC0wY2JkOTM5NzYwOTdfcHVibGljYXRpb24",
+]
 
+# Rich metadata for specific MDR links provided by the user.
+# Dates are given as "dd.mm.yyyy" and will be parsed to a UTC timestamp.
+MANUAL_EPISODE_METADATA: Dict[str, Dict[str, str]] = {
+    "https://www.mdr.de/sandmann/video-536936.html": {
+        "title": "Pěskowčik: Kalli chce być myška",
+        "description": (
+            "Kalli njemóže sej zaso raz wusnyć! Tónraz stanie so z myšku, "
+            "dokelž tak rady twarožk rymza."
+        ),
+        "date": "22.08.2021",
+    },
+    "https://www.mdr.de/sandmann/video-529286.html": {
+        "title": "Pěskowčik: Pirat Kalli so hněwa",
+        "description": (
+            "Kalli chce pirat być, tola Mareike je jemu tutu ideju skazyła. "
+            "Naraz stanie so wón samo z kapitanom wulkeje łódźe a hižo wubědźowanje startuje."
+        ),
+        "date": "25.07.2021",
+    },
+    "https://www.mdr.de/sandmann/video-529344.html": {
+        "title": "Pěskowčik: Kalli a wobraz za Mareiku",
+        "description": (
+            "Kalli njemóže sej zaso raz wusnyć. Tónraz je módry krokodil namolował "
+            "a chce so ze seršćowcom stać. Kalli chce mjenujcy swět pisaniši sčinić."
+        ),
+        "date": "11.07.2021",
+    },
+}
+
+def _parse_de_date_to_ts(date_str: str) -> int:
+    """Parse a date in format dd.mm.yyyy to a UTC timestamp (12:00).
+
+    Returns 0 on failure.
+    """
+    try:
+        # remove weekday prefixes like "So " if present and trailing punctuation
+        cleaned = date_str.strip()
+        cleaned = re.sub(r"^[A-Za-zÀ-ÿ]{2,3}\s+", "", cleaned)  # drop short weekday like So, Mo
+        cleaned = cleaned.rstrip(".")
+        dt = datetime.strptime(cleaned, "%d.%m.%Y").replace(tzinfo=timezone.utc)
+        # set to noon to avoid timezone edge cases
+        dt = dt.replace(hour=12, minute=0, second=0, microsecond=0)
+        return int(dt.timestamp())
+    except Exception:
+        return 0
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_ard_episode(base64_id: str) -> Optional[Dict[str, Any]]:
     """Fetch episode details directly from the ARD page‑gateway API.
 
@@ -250,7 +455,7 @@ def fetch_ard_episode(base64_id: str) -> Optional[Dict[str, Any]]:
     """
     api_url = f"https://api.ardmediathek.de/page-gateway/pages/ard/item/{base64_id}"
     try:
-        resp = requests.get(api_url, timeout=10)
+        resp = requests.get(api_url, timeout=6)
         resp.raise_for_status()
         data = resp.json()
     except Exception:
@@ -333,12 +538,22 @@ def build_rss(results: List[Dict[str, Any]]) -> str:
 
     items_xml = []
     for entry in results:
-        title = escape(entry.get("title", ""))
-        description = escape(entry.get("description", ""))
-        pub_date = convert_timestamp(entry.get("timestamp", 0))
-        link = escape(entry.get("url_website", ""))
-        enclosure_url = escape(entry.get("url_video", ""))
-        duration = entry.get("duration")
+        # Ensure we always pass strings to escape(); handle None values robustly.
+        title = escape((entry.get("title") or ""))
+        description = escape((entry.get("description") or ""))
+        pub_date = convert_timestamp(int(entry.get("timestamp", 0) or 0))
+        link = escape((entry.get("url_website") or ""))
+        enclosure_url = escape((entry.get("url_video") or ""))
+        # Build enclosure only if a video URL is present; infer MIME type.
+        if enclosure_url:
+            lower = enclosure_url.lower()
+            if lower.endswith('.m3u8'):
+                enclosure_type = 'application/x-mpegURL'
+            else:
+                enclosure_type = 'video/mp4'
+            enclosure_xml = f"<enclosure url=\"{enclosure_url}\" length=\"0\" type=\"{enclosure_type}\" />"
+        else:
+            enclosure_xml = ""
         item_xml = f"""
         <item>
             <title>{title}</title>
@@ -346,7 +561,7 @@ def build_rss(results: List[Dict[str, Any]]) -> str:
             <link>{link}</link>
             <guid>{link}</guid>
             <pubDate>{pub_date}</pubDate>
-            <enclosure url="{enclosure_url}" length="{duration}" type="video/mp4" />
+            {enclosure_xml}
         </item>
         """
         items_xml.append(item_xml.strip())
@@ -398,68 +613,51 @@ def main() -> None:
     )
     st.info("Diese App befindet sich noch im Aufbau und in der Entwicklung")
     st.markdown(
-    """
-    Um sich nicht mit Mediatheken oder Google herumärgern zu müssen und die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, gibt es diese App.
+        """
+        Um sich nicht mit den Mediatheken oder Google herumärgern zu müssen und um die wenigen aktuell verfügbaren sorbischen Folgen schnell griffbereit zu haben, habe ich diese App entwickelt.
+        
+        Bei der Entwicklung musste ich leider feststellen:
+        """
+    )
 
-    Bei der Entwicklung musste ich leider feststellen:
-    1. Nicht immer bekommt eine sorbische Episode auch einen sorbischsprachigen Titel und Beschreibung – manchmal ist alles nur auf Deutsch.
-    2. Es kam schon vor, dass im Titel **Plumps** steht, dich aber in der Episode **Fuchs und Elster** begrüßen.
-    Das liegt nicht an der API oder dieser App, sondern direkt an der ARD-Mediathek!
-       
-    Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen. 
-    https://github.com/max2058/stream.peskowcik
-    
-    
-    """
+    with st.expander("Mehr lesen"):
+        st.markdown(
+            """
+            1. Nicht immer bekommt eine sorbische Episode auch einen sorbischsprachigen Titel und Beschreibung – manchmal ist alles nur auf Deutsch.
+            2. Es kam schon vor, dass im Titel **Plumps** steht, dich aber in der Episode **Fuchs und Elster** begrüßen.
+            Das liegt nicht an der API oder dieser App, sondern direkt an der ARD-Mediathek!
+            """
+        )
+
+    st.markdown(
+        """
+        Diese App nutzt die offene MediathekViewWeb‑API, um sorbischsprachige Sandmännchen‑Folgen zu finden und anzuzeigen. 
+        https://github.com/max2058/stream.peskowcik
+        """
     )
     
     # API Query and Fetch
     with st.spinner("Lade Daten von der Mediathek…"):
-        # We fetch a larger window of results so that recently
         # veröffentlichte sorbische Episoden ohne "sorbisch" im Titel
-        # nicht untergehen.  Adjust size if necessary.
-        # Fetch the first page of results for "Unser Sandmännchen".  We start
-        # with 200 items which correspond to roughly 100 Sendetage (ca. zwei
-        # Folgen pro Tag).  We fetch the second page only if needed later.
-        query_json = build_query(topic="Unser Sandmännchen", title_filter=None, size=200, offset=0)
+        # nicht untergehen.  Reduzierte Page‑Size für schnelleren Start.
+        page_size = 120
+        query_json = build_query(topic="Unser Sandmännchen", title_filter=None, size=page_size, offset=0)
         results = fetch_results(query_json)
 
     if not results:
         st.warning("Es wurden keine passenden Einträge gefunden.")
         return
 
-    #
-    # Filter for sorbian episodes.  To avoid long load times, we examine
-    # only a subset of the most recent entries and fetch subsequent
-    # pages only if necessary.  Checking each entry may trigger an
-    # additional network request to the ARD API (if used in heuristics),
-    # so we limit the number of checks and deduplicate results on the fly.
-    #
     sorbian_entries: List[Dict[str, Any]] = []
-    # Use a set of strings to track unique episodes.  Wherever possible
-    # we deduplicate based on a stable base64 identifier extracted from
-    # the episode URLs.  If no identifier can be found, we fall back
-    # to the normalized title.  We avoid using the timestamp as part
-    # of the deduplication key because some duplicates have different
-    # publication timestamps for the same content.
-    # Use a set of tuples for deduplication.  Each key consists of
-    # (normalized title, normalized description, date string).  This
-    # approach tolerates variations in publication timestamps or URLs but
-    # collapses entries that are effectively identical in content and
-    # broadcast date (e.g. "Fuchs und Elster: Gestörte Angelfreuden" in ARD
-    # and KiKA).  The normalized description ensures that similar titles
-    # with different episode descriptions are treated separately.
-    # Mapping of deduplication keys to the best episode entry.  Each key
-    # consists of (normalized title, normalized description, date string).
     sorbian_map: Dict[tuple[str, str, str], Dict[str, Any]] = {}
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=120)  # limit to last 120 Tage
-    max_checks = 200  # maximum number of entries to examine per page
+    max_checks = 120  # maximum number of entries to examine per page (≈ page_size)
     max_results = 15  # maximum number of sorbian episodes to collect
     offset = 0
     while len(sorbian_map) < max_results:
         # If not the first iteration, fetch the next page
         if offset > 0:
-            query_json_page = build_query(topic="Unser Sandmännchen", title_filter=None, size=200, offset=offset)
+            query_json_page = build_query(topic="Unser Sandmännchen", title_filter=None, size=page_size, offset=offset)
             page_results = fetch_results(query_json_page)
             if not page_results:
                 break
@@ -499,32 +697,140 @@ def main() -> None:
                         break
             checked += 1
         # Determine whether to fetch another page
-        if cutoff_reached or len(sorbian_entries) >= max_results:
+        if cutoff_reached or len(sorbian_map) >= max_results:
             break
         # If we examined fewer entries than max_checks it means the page
         # contained fewer than max_checks items, so there is no need to
         # request further pages.
         if checked < max_checks:
             break
-        offset += 200
+        offset += page_size
 
     # Optionally include manually specified episodes that might not yet
     # appear in the MediathekView database.  These are considered in
     # the same deduplication logic as the API entries.
+    def _add_entry_to_map(ep: Optional[Dict[str, Any]]):
+        if not ep:
+            return
+        title_norm = (ep.get("title") or "").strip().lower()
+        desc_norm = (ep.get("description") or "").strip().lower()
+        ts_int = int(ep.get("timestamp", 0))
+        date_str = datetime.fromtimestamp(ts_int, tz=timezone.utc).strftime("%Y-%m-%d") if ts_int else ""
+        key = (title_norm, desc_norm, date_str)
+        existing = sorbian_map.get(key)
+        if existing is None or sorbian_score(ep) > sorbian_score(existing):
+            sorbian_map[key] = ep
+
+    # From known base64 IDs
     for base64_id in MANUAL_EPISODES:
         try:
             ep = fetch_ard_episode(base64_id)
         except Exception:
             ep = None
-        if ep:
-            title_norm = (ep.get("title") or "").strip().lower()
-            desc_norm = (ep.get("description") or "").strip().lower()
-            ts_int = int(ep.get("timestamp", 0))
-            date_str = datetime.fromtimestamp(ts_int, tz=timezone.utc).strftime("%Y-%m-%d") if ts_int else ""
-            key = (title_norm, desc_norm, date_str)
-            existing = sorbian_map.get(key)
-            if existing is None or sorbian_score(ep) > sorbian_score(existing):
-                sorbian_map[key] = ep
+        _add_entry_to_map(ep)
+
+    # From external URLs (ARD or MDR); try to resolve to ARD base64 first
+    for src in MANUAL_EPISODE_URLS:
+        meta = MANUAL_EPISODE_METADATA.get(src)
+        fetched = None
+        # Prefer direct MDR parsing first to avoid double network fetches
+        is_mdr = "mdr.de" in src
+        base64_id = None
+        if is_mdr:
+            try:
+                fetched = fetch_mdr_episode(src)
+            except Exception:
+                fetched = None
+            # If MDR didn’t yield a playable URL, try to resolve an ARD ID
+            if not (fetched and fetched.get("url_video")):
+                base64_id = resolve_base64_from_url(src)
+        else:
+            # ARD link: try to extract base64 ID quickly (no network if present)
+            base64_id = resolve_base64_from_url(src) if src.startswith("http") else None
+
+        if base64_id:
+            try:
+                fetched = fetch_ard_episode(base64_id)
+            except Exception:
+                fetched = None
+            # If ARD didn't provide a playable video, try MDR extraction
+            if fetched and not fetched.get("url_video") and is_mdr:
+                try:
+                    mdr_ep = fetch_mdr_episode(src)
+                except Exception:
+                    mdr_ep = None
+                if mdr_ep and mdr_ep.get("url_video"):
+                    fetched = {**fetched, "url_video": mdr_ep.get("url_video")}
+            if meta:
+                # Merge fetched video (if any) with manual title/desc/date and keep MDR link
+                _add_entry_to_map(
+                    {
+                        "channel": (fetched or {}).get("channel", "MDR"),
+                        "topic": "Unser Sandmännchen",
+                        "title": meta.get("title", (fetched or {}).get("title")),
+                        "description": meta.get("description", (fetched or {}).get("description")),
+                        "timestamp": _parse_de_date_to_ts(meta.get("date", "")) or (fetched or {}).get("timestamp", 0),
+                        "duration": (fetched or {}).get("duration"),
+                        "size": None,
+                        "url_website": src,
+                        "url_video": (fetched or {}).get("url_video"),
+                    }
+                )
+            else:
+                _add_entry_to_map(fetched)
+        else:
+            # Fallback: build a manual entry using provided metadata if available
+            if meta:
+                # Try MDR extraction first to get a playable stream
+                try:
+                    mdr_ep = fetch_mdr_episode(src)
+                except Exception:
+                    mdr_ep = None
+                if mdr_ep and mdr_ep.get("url_video"):
+                    _add_entry_to_map(
+                        {
+                            "channel": "MDR",
+                            "topic": "Unser Sandmännchen",
+                            "title": meta.get("title", mdr_ep.get("title", "Pěskowčik (MDR)")),
+                            "description": meta.get("description", mdr_ep.get("description", "")),
+                            "timestamp": _parse_de_date_to_ts(meta.get("date", "")) or mdr_ep.get("timestamp", 0),
+                            "duration": None,
+                            "size": None,
+                            "url_website": src,
+                            "url_video": mdr_ep.get("url_video"),
+                        }
+                    )
+                else:
+                    _add_entry_to_map(
+                        {
+                            "channel": "MDR",
+                            "topic": "Unser Sandmännchen",
+                            "title": meta.get("title", "Pěskowčik (MDR)"),
+                            "description": meta.get("description", "Manuell hinzugefügt – externen Link öffnen."),
+                            "timestamp": _parse_de_date_to_ts(meta.get("date", "")),
+                            "duration": None,
+                            "size": None,
+                            "url_website": src,
+                            "url_video": None,
+                        }
+                    )
+            else:
+                # Minimal fallback
+                m = re.search(r"video-(\d+)", src)
+                short = m.group(1) if m else src.rsplit("/", 1)[-1]
+                _add_entry_to_map(
+                    {
+                        "channel": "MDR",
+                        "topic": "Unser Sandmännchen",
+                        "title": f"Pěskowčik (MDR) – {short}",
+                        "description": "Manuell hinzugefügt – externen Link öffnen.",
+                        "timestamp": 0,
+                        "duration": None,
+                        "size": None,
+                        "url_website": src,
+                        "url_video": None,
+                    }
+                )
 
     # Convert the sorbian_map to a list for further processing
     sorbian_entries = list(sorbian_map.values())
@@ -576,13 +882,45 @@ def main() -> None:
             # website as fallback when url_video is missing.
             video_url = row["Video"]
             if video_url:
-                video_html = f'''
+                vu = str(video_url)
+                if vu.lower().endswith(".m3u8"):
+                    # Use hls.js for cross‑browser HLS playback
+                    player_id = f"vid-{idx}"
+                    video_html = f'''
+<div>
+  <video id="{player_id}" controls preload="none" playsinline style="width: 100%; height: auto;" poster="{THUMBNAIL_DATA_URL}"></video>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script>
+    (function() {{
+      var url = {json.dumps(vu)};
+      var video = document.getElementById({json.dumps(player_id)});
+      if (video.canPlayType('application/vnd.apple.mpegURL')) {{
+        video.src = url;
+      }} else if (window.Hls && window.Hls.isSupported()) {{
+        var hls = new Hls();
+        hls.loadSource(url);
+        hls.attachMedia(video);
+      }} else {{
+        // Fallback link if HLS unsupported
+        var a = document.createElement('a');
+        a.href = url;
+        a.innerText = 'Video öffnen';
+        a.target = '_blank';
+        video.parentNode.appendChild(a);
+      }}
+    }})();
+  </script>
+</div>
+'''
+                    components.html(video_html, height=320)
+                else:
+                    video_html = f'''
 <video controls preload="none" playsinline style="width: 100%; height: auto;" poster="{THUMBNAIL_DATA_URL}">
-  <source src="{video_url}" type="video/mp4">
+  <source src="{vu}" type="video/mp4">
   Dein Browser unterstützt das Video-Tag nicht.
 </video>
 '''
-                components.html(video_html, height=300)
+                    components.html(video_html, height=300)
             else:
                 # Fallback: verlinktes Vorschaubild zur Website
                 website = row["Website"]
