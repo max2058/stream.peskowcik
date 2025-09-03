@@ -367,8 +367,16 @@ MANUAL_EPISODES: List[str] = [
     # Pěskowčik: Liška a sroka: Špewaca lisca wopus | 06.07.2025
     "Y3JpZDovL3JiYl8xNDYwZDFhZS1hYTBkLTQ5YjctYTRlYy1kZDZiOWVmNjI1OWRfcHVibGljYXRpb24",
 
+    # Pěskowčik: Plumps: Powetrowy balon | 13.07.2025
+    "Y3JpZDovL3JiYl80MzU4NjU4Ny1jZDk3LTQ4MTEtYWFkNS05YWMzYmJjZWY3OGVfcHVibGljYXRpb24",
+    # Pěskowčik: Plumps: Jako chcyše ćipka wulka być | 27.07.2025
+    "Y3JpZDovL3JiYl9kNGU3YTc0Mi1jYzEzLTRjNTYtYjVkYS01OWQ5MmFkZjJjZDlfcHVibGljYXRpb24",
+    # Pěskowčik: Plumps: Der Glückskäfer | 10.08.2025
+    "Y3JpZDovL3JiYl84OWJjODc4Mi01MWYwLTQ2NzgtYmM5MC1mYzIxMzNkOTIyOWFfcHVibGljYXRpb24",
     # Fuchs und Elster: Gestörte Angelfreuden (sorbisch) | 24.08.2025
     "Y3JpZDovL3JiYl80MDE1ZGU4MS01ZjQwLTRhOWItYjdlNi1kZTQ3ZGU2M2Y5MTVfcHVibGljYXRpb24",
+    # Pěskowčik: Pitiplac mopi a knyskotaty law | 31.08.2025
+    "Y3JpZDovL3JiYl81NTY3M2M5Zi01YjAyLTQ5OTQtOTI1Ny1lMjk5MjdlMjNhNjZfcHVibGljYXRpb24",
 ]
 
 # Optional additional sources (URLs) that might not show up in MediathekView yet.
