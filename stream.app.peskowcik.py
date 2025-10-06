@@ -140,6 +140,11 @@ def extract_base64_id(url: str) -> Optional[str]:
     # The ID is the last path segment after the last slash.
     parts = url.rstrip("/").split("/")
     candidate = parts[-1]
+    # Strip query params or fragments if present
+    if "?" in candidate:
+        candidate = candidate.split("?", 1)[0]
+    if "#" in candidate:
+        candidate = candidate.split("#", 1)[0]
     # Only return IDs that look like ARD's base64-encoded CRIDs.  These
     # identifiers always start with "Y3Jp" (the base64 encoding of "crid").
     # We avoid returning shorter slugs (e.g. Kika URLs), because those
@@ -308,6 +313,8 @@ def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
     # simple keywords that almost always mark sorbian episodes
     keywords = [
         "sorbisch",
+        "obersorbisch",
+        "niedersorbisch",
         "peskowcik",
         "pěskowčik",
         "gestörte angelfreuden",
@@ -325,6 +332,38 @@ def is_sorbian_episode(entry: Dict[str, Any]) -> bool:
         if kw in title or kw in description:
             return True
     return False
+
+def detect_language(entry: Dict[str, Any]) -> Optional[str]:
+    """Detect language variant for an entry.
+
+    Returns "Obersorbisch" or "Niedersorbisch" when detected. If the
+    material only mentions generic "Sorbisch", treat it as "Obersorbisch"
+    per project convention. Returns None if unknown.
+    """
+    if not entry:
+        return None
+    title = (entry.get("title") or "").lower()
+    desc = (entry.get("description") or "").lower()
+    url = (entry.get("url_website") or "").lower()
+
+    text = " ".join([title, desc, url])
+
+    if "niedersorbisch" in text:
+        return "Niedersorbisch"
+    if "obersorbisch" in text:
+        return "Obersorbisch"
+    # Generic 'sorbisch' should count as Obersorbisch
+    if "sorbisch" in text:
+        return "Obersorbisch"
+
+    # Heuristics based on typical naming in titles
+    # Upper Sorbian usually uses "Pěskowčik/Peskowcik"
+    if "pěskowčik" in text or "peskowcik" in text:
+        return "Obersorbisch"
+    # Lower Sorbian titles often include "Naš/Na61 peskowy muzyk"
+    if ("nas peskowy" in text) or ("naš pěskowy" in text) or ("na\u0161 p\u011bskowy" in text):
+        return "Niedersorbisch"
+    return None
 
 def sorbian_score(entry: Dict[str, Any]) -> int:
     """Return a score indicating how likely the entry is to be sorbischsprachig.
@@ -389,6 +428,17 @@ MANUAL_EPISODE_URLS: List[str] = [
     # Provided by user: ARD Mediathek direct links (already contain base64 ID)
     "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-liska-a-sroka-jablucina-oder-unser-sandmaennchen-sorbisch-oder-17-08-2025/rbb/Y3JpZDovL3JiYl9iNmY2MWU1ZC02NDdkLTQ2ZjQtYjYzNC0wY2JkOTM5NzYwOTdfcHVibGljYXRpb24",
     "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-liska-a-sroka-prekwapjenka-za-knjeni-sroku-oder-unser-sandmaennchen-sorbisch-oder-03-08-2025/rbb/Y3JpZDovL3JiYl82NjM2ZDcxZS0zYzZjLTRjYTUtOGI1ZS0yNjc0OTQxMjQ0ZWZfcHVibGljYXRpb24",
+    # New links (Obersorbisch + Niedersorbisch; Oct/Nov 2025)
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-kito-maja-a-potajna-krinja-wo-dziwjej-zonje-a-zlotym-liscu-oder-unser-sandmaennchen-obersorbisch-oder-02-11-2025/rbb/Y3JpZDovL3JiYl8zZDIxODZiYi00YWU3LTQwNDQtOTYyMC1lNGQ4Yzg4MzYzMzVfcHVibGljYXRpb24?isChildContent",
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/nas-peskowy-muzyk-kito-maja-a-kista-cowankow-wo-ziwej-zenskej-a-zlotem-jagnjesu-oder-unser-sandmaennchen-niedersorbisch-oder-02-11-2025/rbb/Y3JpZDovL3JiYl81NjYzZjE5NS00MzQ4LTQzNTktYmRmNy0xYjIxN2M5NzI1ZWJfcHVibGljYXRpb24?isChildContent",
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-kito-maja-a-potajna-krinja-wo-wodnym-muzu-a-kak-je-pomhac-chcyl-oder-unser-sandmaennchen-obersorbisch-oder-26-10-2025/rbb/Y3JpZDovL3JiYl8xZjJlZmQ2Ni05NDg4LTQ0MmEtYWIzNC01YjIwM2ExMTdhMmJfcHVibGljYXRpb24?isChildContent",
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/nas-peskowy-muzyk-kito-maja-a-kista-cowankow-wo-wodnem-muzu-a-kak-jo-won-ksel-pomagas-oder-unser-sandmaennchen-niedersorbisch-oder-26-10-2025/rbb/Y3JpZDovL3JiYl8wYWYwMzg5MS1lMjM1LTQ0OWQtYTA0Mi0xNTIzNDFkNDY5MjFfcHVibGljYXRpb24?isChildContent",
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-kito-maja-a-potajna-krinja-wo-hobrje-sprjewniku-a-kak-so-sprjewja-wuzorli-oder-unser-sandmaennchen-obersorbisch-oder-19-10-2025/rbb/Y3JpZDovL3JiYl84ZDhlNDllOS0yNTJlLTQxNTUtYTRjYy03NGUwY2Y4NGU4M2RfcHVibGljYXRpb24?isChildContent",
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/nas-peskowy-muzyk-kito-maja-a-kista-cowankow-wo-wjelikanje-sprjejniku-a-sprjewi-oder-unser-sandmaennchen-niedersorbisch-oder-19-10-2025/rbb/Y3JpZDovL3JiYl9hYmEwNjhmMS0wYjg0LTQ1ZGQtOGJhZi1iNWI3ZmRkMzg2NzBfcHVibGljYXRpb24?isChildContent",
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-kito-maja-a-potajna-krinja-wo-cerciku-a-kak-stej-jemu-wolaj-ceknyloj-oder-unser-sandmaennchen-obersorbisch-oder-12-10-2025/rbb/Y3JpZDovL3JiYl84ZDg4NTViZi1mMGFjLTRlZDEtODNkNC0zZTdjMjFkMzA5OWNfcHVibGljYXRpb24?isChildContent",
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/nas-peskowy-muzyk-kito-maja-a-kista-cowankow-wo-carsiku-a-jogo-wub-gnjonych-wolach-oder-unser-sandmaennchen-niedersorbisch-oder-12-10-2025/rbb/Y3JpZDovL3JiYl9lY2I0NTA2Mi1kMTY3LTQ2YzktYWI4YS1hOTVlODlmM2RhNmNfcHVibGljYXRpb24?isChildContent",
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/peskowcik-kito-maja-a-potajna-krinja-wo-zmiju-a-kak-jeho-zaso-wotbudzes-oder-unser-sandmaennchen-obersorbisch-oder-05-10-2025/rbb/Y3JpZDovL3JiYl8xYzI0MTNiZC1lMWZjLTRlOTQtYWNkNy1lNDE3ZDViNjBiMTNfcHVibGljYXRpb24?isChildContent",
+    "https://www.ardmediathek.de/video/unser-sandmaennchen/nas-peskowy-muzyk-kito-maja-a-kista-cowankow-wo-plonje-a-kak-se-mozos-jogo-zasej-wobijas-oder-unser-sandmaennchen-niedersorbisch-oder-05-10-2025/rbb/Y3JpZDovL3JiYl9jOWQ2MzNkYS03MGE1LTRkMDQtOWU1NS1kZmM4YWYyNjhkY2JfcHVibGljYXRpb24?isChildContent",
 ]
 
 # Rich metadata for specific MDR links provided by the user.
@@ -841,10 +891,12 @@ def main() -> None:
     # Transform sorbian_entries for display
     table_rows: List[Dict[str, Any]] = []
     for entry in sorted(sorbian_entries, key=lambda e: e.get("timestamp", 0), reverse=True):
+        lang = detect_language(entry) or "—"
         row = {
             "Titel": entry.get("title"),
             "Beschreibung": entry.get("description"),
             "Datum": datetime.fromtimestamp(entry.get("timestamp", 0)).strftime("%d.%m.%Y"),
+            "Sprache": lang,
             # Einheitliches Vorschaubild für alle Videos
             # "Vorschau": DEFAULT_THUMBNAIL,
             "Video": entry.get("url_video"),
@@ -854,39 +906,40 @@ def main() -> None:
 
     st.subheader("Aktuelle Folgen jetzt Streamen")
 
-    # No JS toggles or theme-specific button styles to keep things snappy and consistent
-    cols = st.columns(3)
-    for idx, row in enumerate(table_rows):
-        col = cols[idx % 3]
-        with col:
-            # Prominent title + smaller meta date line
-            st.markdown(
-                f"<div class='episode-title'>{html_escape(str(row['Titel'] or ''))}</div>"
-                f"<div class='episode-meta'>{html_escape(str(row['Datum'] or ''))}</div>",
-                unsafe_allow_html=True,
-            )
+    def render_cards(rows: List[Dict[str, Any]], section_key: str) -> None:
+        # No JS toggles or theme-specific button styles to keep things snappy and consistent
+        cols = st.columns(3)
+        for idx, row in enumerate(rows):
+            col = cols[idx % 3]
+            with col:
+                # Prominent title + smaller meta date line (+ language)
+                st.markdown(
+                    f"<div class='episode-title'>{html_escape(str(row['Titel'] or ''))}</div>"
+                    f"<div class='episode-meta'>{html_escape(str(row['Datum'] or ''))} · {html_escape(str(row.get('Sprache') or '—'))}</div>",
+                    unsafe_allow_html=True,
+                )
 
-            # Vorschau: immer 2 Zeilen (CSS line‑clamp) mit rein CSS-basiertem Toggle ohne Rerun/JS
-            desc = html_escape(str(row.get("Beschreibung") or ""))
-            toggle_id = f"toggle-{idx}"
-            html_block = (
-                f"<div class='desc-wrap'>"
-                f"<input type='checkbox' id='{toggle_id}' class='desc-toggle'>"
-                f"<div class='episode-desc'>{desc}</div>"
-                f"<label for='{toggle_id}' class='readmore more'>Mehr lesen</label>"
-                f"<label for='{toggle_id}' class='readmore less'>Weniger</label>"
-                f"</div>"
-            )
-            st.markdown(html_block, unsafe_allow_html=True)
-            # Some entries may not have a direct video url (e.g. if geoblocked). Use the
-            # website as fallback when url_video is missing.
-            video_url = row["Video"]
-            if video_url:
-                vu = str(video_url)
-                if vu.lower().endswith(".m3u8"):
-                    # Use hls.js for cross‑browser HLS playback
-                    player_id = f"vid-{idx}"
-                    video_html = f'''
+                # Vorschau: immer 2 Zeilen (CSS line‑clamp) mit rein CSS-basiertem Toggle ohne Rerun/JS
+                desc = html_escape(str(row.get("Beschreibung") or ""))
+                toggle_id = f"toggle-{section_key}-{idx}"
+                html_block = (
+                    f"<div class='desc-wrap'>"
+                    f"<input type='checkbox' id='{toggle_id}' class='desc-toggle'>"
+                    f"<div class='episode-desc'>{desc}</div>"
+                    f"<label for='{toggle_id}' class='readmore more'>Mehr lesen</label>"
+                    f"<label for='{toggle_id}' class='readmore less'>Weniger</label>"
+                    f"</div>"
+                )
+                st.markdown(html_block, unsafe_allow_html=True)
+                # Some entries may not have a direct video url (e.g. if geoblocked). Use the
+                # website as fallback when url_video is missing.
+                video_url = row["Video"]
+                if video_url:
+                    vu = str(video_url)
+                    if vu.lower().endswith(".m3u8"):
+                        # Use hls.js for cross‑browser HLS playback
+                        player_id = f"vid-{section_key}-{idx}"
+                        video_html = f'''
 <div>
   <video id="{player_id}" controls preload="none" playsinline style="width: 100%; height: auto;" poster="{THUMBNAIL_DATA_URL}"></video>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
@@ -912,20 +965,34 @@ def main() -> None:
   </script>
 </div>
 '''
-                    components.html(video_html, height=320)
-                else:
-                    video_html = f'''
+                        components.html(video_html, height=320)
+                    else:
+                        video_html = f'''
 <video controls preload="none" playsinline style="width: 100%; height: auto;" poster="{THUMBNAIL_DATA_URL}">
   <source src="{vu}" type="video/mp4">
   Dein Browser unterstützt das Video-Tag nicht.
 </video>
 '''
-                    components.html(video_html, height=300)
-            else:
-                # Fallback: verlinktes Vorschaubild zur Website
-                website = row["Website"]
-                preview_link_html = f'<a href="{website}" target="_blank"><img src="{THUMBNAIL_DATA_URL}" style="width:100%; height:auto; border:0;"/></a>'
-                components.html(preview_link_html, height=300)
+                        components.html(video_html, height=300)
+                else:
+                    # Fallback: verlinktes Vorschaubild zur Website
+                    website = row["Website"]
+                    preview_link_html = f'<a href="{website}" target="_blank"><img src="{THUMBNAIL_DATA_URL}" style="width:100%; height:auto; border:0;"/></a>'
+                    components.html(preview_link_html, height=300)
+
+    # Unterteilung nach Sprache
+    rows_ob = [r for r in table_rows if (r.get("Sprache") == "Obersorbisch")]
+    rows_ns = [r for r in table_rows if (r.get("Sprache") == "Niedersorbisch")]
+
+    if rows_ob:
+        st.markdown("### Obersorbisch")
+        render_cards(rows_ob, "ob")
+    if rows_ns:
+        st.markdown("### Niedersorbisch")
+        render_cards(rows_ns, "ns")
+    if not rows_ob and not rows_ns:
+        # Fallback: show all if language couldn't be detected
+        render_cards(table_rows, "all")
 
     st.subheader("Gefundene Folgen")
     df = pd.DataFrame(table_rows)
@@ -936,6 +1003,7 @@ def main() -> None:
         hide_index=True,
         column_config={
             "Beschreibung": st.column_config.TextColumn("Beschreibung", width="medium"),
+            "Sprache": st.column_config.TextColumn("Sprache", width="small"),
             "Website": st.column_config.LinkColumn("Website", display_text="zur Seite"),
             "Vorschau": st.column_config.ImageColumn("Vorschau", width="small"),
         },
